@@ -1,9 +1,9 @@
 # Handoff — Implementación Vast.ai + HF Hub para embebidos-3
 
-> **Fecha de cierre de sesión:** 2026-05-12
-> **Sesión origen:** Claude Code (Opus 4.7), conversación con context compaction
-> **Estado:** Ronda 4 /investiga cerrada y documentada. **No se ha iniciado implementación.**
-> **Próxima sesión:** Implementar plan operativo (5 tareas priorizadas, ver §6).
+> **Fecha de cierre de sesión:** 2026-05-12 (Ronda 5 cerrada; consolidación §11 ejecutada)
+> **Sesión origen:** Claude Code (Opus 4.7), conversaciones con context compaction
+> **Estado:** Rondas 4 y 5 cerradas. Repo GitHub pusheado, HF Hub repo creado, docs consolidados a 5 archivos autocontenidos. **Implementación de scripts y notebooks NO iniciada.**
+> **Próxima sesión:** ejecutar plan operativo §5 (#2'-#5').
 
 Este documento es un handoff completo. Léelo de arriba a abajo antes de
 ejecutar cualquier acción. Asume que el nuevo agente no tiene memoria
@@ -29,28 +29,29 @@ semestre 7). Deadline: **2026-05-26**.
 
 | Track | Modelo | Input | Export final | Runtime en Nano |
 |-------|--------|-------|--------------|-----------------|
-| **A** | SSD MobileNet v2 FPNLite | 320×320 | `.tflite` INT8 | CPU + XNNPACK + NEON |
+| **A** | SSD MobileNet v2 plain (no FPN) | 320×320 | `.tflite` INT8 PTQ | CPU + XNNPACK + NEON |
 | **B** | YOLOv8n | 416×416 | `.onnx` opset 11 → `.engine` FP16 | GPU Maxwell `sm_53` |
 
 ### Constraints hardware inmutables (Jetson Nano B01)
 
-- Maxwell **128 CUDA cores, SIN Tensor Cores INT8**
+- Maxwell **128 CUDA cores, SIN Tensor Cores INT8, sin instrucción `dp4a`**
 - Python 3.6.9 (system)
 - TensorFlow 2.5+nv21.8 (NVIDIA build oficial)
-- TensorRT 8.2.1
+- TFLite runtime 2.5
+- TensorRT 8.2.1.8
 - CUDA 10.2 + cuDNN 8.2.1
 - L4T R32.7.x, kernel Linux 4.9.337
 
-**Implicación crítica:** sin Tensor Cores INT8, el drop empírico de
-PTQ en YOLOv8n no está documentado en literatura (toda evidencia es
-`sm_75+`). Karimov 2025 reporta Static INT8 −7,2 pp en GPUs modernas;
-en Maxwell puede ser peor. **No mitigable sin medición empírica.**
+**Implicación crítica (gap residual cerrado en R5):** Maxwell sm_53 no
+tiene `dp4a` (Pascal sm_61+) → el speedup INT8 es estructuralmente
+nulo. Track B se queda en **FP16-only por default** (D14); experimento
+INT8 opcional en el propio Nano con criterio binario.
 
 ---
 
 ## 2. Por qué migramos a Vast.ai
 
-Track A (Colab) se intentó con condacolab pero falló por dos razones
+Track A (Colab) se intentó con `condacolab` pero falló por dos razones
 encadenadas:
 
 1. **`condacolab.check()` lanza `AssertionError`**, no devuelve `False`.
@@ -65,26 +66,41 @@ y frameworks que han sido demostradas como estables y compatibles
 dentro de la Jetson Nano. Usar la mejor GPU. No me importan costos,
 pero mantener logging robusto y persistencia de TODO en HF Hub."*
 
+**Decisión del usuario Ronda 5 (verbatim):** *"Necesito negociar [...]
+correrlo como notebook [...] que su ejecución no se afecte porque
+cerré la pestaña [...] todo sea lo más compatible entre sí (ver uv)
+[...] garantizar que los productos de esta fase sean compatibles/se
+puedan usar desde la Jetson Nano de forma estable y robusta."*
+
 Vast.ai tiene saldo confirmado: **1,72 USD** disponibles.
 
 ---
 
-## 3. Decisiones vinculantes Ronda 4 (8 ítems)
+## 3. Decisiones vinculantes consolidadas D1–D15
 
-Documentadas en
-`investigaciones/2026-05-12/2026-05-12-compatibilidad-notebooks-training.md`
-sección Ronda 4. **No cambiar sin nueva ronda /investiga.**
+Decisiones D1–D8 (Ronda 4) y D9–D15 (Ronda 5), consolidadas en
+`decisiones-D1-D15-ledger.md` (índice maestro con cross-refs a los
+otros 4 docs).
 
-| # | Decisión | Justificación |
-|---|----------|---------------|
-| 1 | **Container Vast.ai:** `vastai/base-image:cuda-12.4.1-cudnn-devel-ubuntu22.04-py310` con dual virtualenv (`/opt/venv/tracka` + `/opt/venv/trackb`) | Python 3.10 nativo, CUDA 12.4 compatible con PyTorch 2.1+cu121 y TF 2.15 |
-| 2 | **GPU:** RTX 4090 on-demand (0,35 – 0,50 USD/h) | Mejor relación calidad/precio para training corto (1-2 h Track A, 30-60 min Track B) |
-| 3 | **Repo HF Hub:** `mitgar14/embebidos-3-models` privado, subcarpetas `track_a/` y `track_b/` | Persistencia de checkpoints, logs y exports. HF free tier: 100 GB privado, max 500 GB/archivo, dedup Xet |
-| 4 | **Workflow notebooks:** `jupytext --to py:percent` para convertir `.ipynb` → `.py` headless. Eliminar bootstrap defensivo Colab | papermill no soporta `.py` directamente, jupytext sí. Mantener percent format permite re-conversión bidireccional |
-| 5 | **Patrones HF Hub:** `HfApi.upload_folder(run_as_future=True)` + `CommitScheduler(every=5)` para checkpoints + `upload_large_folder` resumible para tar/zip pesados | Async + idempotente + reanudable |
-| 6 | **Logging:** Track B usa W&B nativo (`yolo train wandb=True`). Track A usa TensorBoard hosted en HF Hub (`HFSummaryWriter`) | W&B integrado en Ultralytics. TensorBoard se renderiza automáticamente en HF Hub si hay `.tfevents.*` |
-| 7 | **Auto-destroy:** `vastai destroy instance $CONTAINER_ID --api-key $CONTAINER_API_KEY` con `trap EXIT` | Evitar billing por instancia idle tras finalizar training |
-| 8 | **Engine TRT siempre en Nano**, nunca transferido | TRT engines no son portables. `--versionCompatible` solo TRT 8.6+, `--hardwareCompatibilityLevel=ampere+` excluye Maxwell `sm_53` |
+**No cambiar sin nueva ronda `/investiga`.**
+
+| # | Decisión | Estado |
+|---|----------|--------|
+| **D1** | Container Vast.ai `vastai/base-image:cuda-12.4.1-cudnn-devel-ubuntu22.04-py310` | Vigente |
+| **D2** | GPU RTX 4090 on-demand (0,35–0,50 USD/h) | Vigente |
+| **D3** | Repo HF Hub `mitgar14/embebidos-3-models` privado con subcarpetas `track_a/{runs,checkpoints,exports,logs}` y `track_b/{...}` | ✅ Creado |
+| **D4** | ~~jupytext `--to py:percent` para convertir `.ipynb` → `.py` headless~~ | **REEMPLAZADA por D9** |
+| **D5** | `HfApi.upload_folder(run_as_future=True)` + `CommitScheduler(every=5)` + `upload_large_folder` resumible | Vigente |
+| **D6** | Track B → W&B nativo (`yolo train wandb=True`). Track A → TensorBoard hosted en HF Hub vía `HFSummaryWriter` | Vigente |
+| **D7** | ~~Auto-destroy con `trap EXIT` en `run.sh`~~ | **REEMPLAZADA por D11** |
+| **D8** | Engine TRT siempre compilado **en el Nano**, nunca transferido | Vigente |
+| **D9** | Mantener `.ipynb` interactivo. Ejecutar con `jupyter nbconvert --execute --inplace` dentro de `tmux` (o papermill equivalente) | Vigente |
+| **D10** | Dos `uv venv` separados (`/opt/venv/tracka` + `/opt/venv/trackb`) registrados como kernels `ipykernel` distintos (`tracka` y `trackb`) | Vigente |
+| **D11** | Auto-destroy vía cron watchdog interno + última celda del notebook que crea `/workspace/embebidos-3/.training_done` y llama `vastai destroy instance ${VAST_CONTAINERLABEL#C.}` | Vigente |
+| **D12** | Validación TFLite pre-deploy: `tflite==2.5.0` para inspeccionar `op_version`, carga test con wheel Coral `tflite_runtime-2.5.0.post1` CP38, export con `experimental_new_quantizer=False` y `experimental_new_converter=False` | Vigente |
+| **D13** | Validación ONNX pre-deploy vía Docker `nvcr.io/nvidia/tensorrt:21.11-py3` (TRT 8.2.1.8 idéntico a JetPack 4.6.1). `polygraphy run --trt --onnxrt --atol 1e-2 --rtol 1e-2 --input-shapes images:[1,3,416,416]` | Vigente |
+| **D14** | Track B **FP16-only por default**. Experimento INT8 opcional 45–60 min en Nano. Criterio binario: si `FPS_INT8 < FPS_FP16 × 1.10` O `mAP_INT8 < mAP_FP16 − 5 pp`, abandonar | Vigente |
+| **D15** | Si wheel NVIDIA `tensorflow==2.5.0+nv21.8` no incluye `TFLite_Detection_PostProcess`, fallback wheel Coral `tflite_runtime-2.5.0.post1-cp36-cp36m-linux_aarch64.whl` | Plan B |
 
 ---
 
@@ -93,191 +109,168 @@ sección Ronda 4. **No cambiar sin nueva ronda /investiga.**
 ```
 C:\Users\mitgar14\Documentos\embebidos-3\
 ├── notebooks\
-│   ├── train_track_a_ssd.ipynb       # Notebook Colab, bootstrap defensivo v4 (a deprecar)
-│   └── train_track_b_yolov8.ipynb    # Notebook Colab Track B
+│   ├── train_track_a_ssd.ipynb       # Notebook con bootstrap defensivo Colab (a refactorizar, NO convertir a .py)
+│   └── train_track_b_yolov8.ipynb    # Notebook Colab Track B (no intervenido aún)
 ├── investigaciones\
 │   ├── 2026-05-05\                   # Rondas 1-2 (arquitectura, datasets, dual-track, preprocessing)
 │   ├── 2026-05-10\                   # Cámara USB Jetson Nano
-│   └── 2026-05-12\
-│       ├── 2026-05-12-compatibilidad-notebooks-training.md  # ~1300 líneas, Rondas 1-4
+│   └── 2026-05-12\                   # Rondas 4-5 (consolidados, ver §11)
 │       ├── HANDOFF-implementacion-vastai-hf.md              # ESTE DOCUMENTO
-│       └── discover-{1..17}-*.md     # 17 discoveries Track B
-├── docs\                              # Vacío o auxiliares
-├── scripts\                           # Por crear (paso #4 de la implementación)
-├── prototipos\                        # Por crear (después de pilot runs)
-├── pyproject.toml                     # uv-managed
+│       ├── decisiones-D1-D15-ledger.md                      # Índice maestro D1-D15 + trail entre rondas (602 líneas)
+│       ├── compatibilidad-stack-cloud-jetson.md             # Hardware Nano + por qué Vast.ai + stack Track A/B (636 líneas)
+│       ├── infraestructura-training-vastai-uv-hf.md         # uv dual venv + tmux+nbconvert + CommitScheduler + W&B (999 líneas)
+│       ├── validacion-artefactos-pre-deploy.md              # 4 gates TFLite/ONNX + Polygraphy NGC + plan B Coral (846 líneas)
+│       └── dataset-roboflow-yolov8.md                       # Dataset 416×416 + bug Roboflow SDK + export ONNX (679 líneas)
+├── docs\
+│   ├── NV_Jetson_Nano_Developer_Kit_User_Guide.pdf
+│   └── validacion-camara-windows.md
+├── scripts\
+│   ├── bench_jetson.py               # Harness FPS/latencia/RAM en Nano (R1-2, ya existía)
+│   └── archive\                      # 4 archivos legacy
+├── prototipos\                       # 4 PNG/JPG/paint de prototipos físicos
+├── main.py                            # Stub
+├── pyproject.toml                     # uv project (Python ≥3.10)
 ├── uv.lock
-└── .gitignore
+├── README.md                          # Documentación dual-track (escrito antes R4-R5)
+└── .gitignore                         # Actualizado: .obsidian/, .env*, modelos, wandb/runs/outputs
 ```
+
+**Estado del repo:**
+- Commit inicial `387c485` con 43 archivos / 10.463 inserciones.
+- Repo GitHub privado `mitgar14/embebidos-3` ✅ pusheado, branch `main` tracking `origin/main`.
+- Repo HF Hub privado `mitgar14/embebidos-3-models` ✅ creado con 10 archivos (README + 8 `.gitkeep` + estructura dual-track).
+- `gh auth setup-git` aplicado (workaround Git Credential Manager → token gh).
 
 **Notebook Track A — estado actual:**
 - `cell-8 v4` con bootstrap defensivo idempotente (`if "banner" not in dir(): ...`)
 - Flujo dos restarts secuencial: Run 1 instala condacolab, Run 2 ejecuta `mamba install python=3.10`
-- **EL FLUJO 2 RESTARTS NO FUNCIONA EN COLAB** por pin de `google-colab`. **A DEPRECAR al convertir a `.py` headless.**
+- **EL FLUJO 2 RESTARTS NO FUNCIONA EN COLAB** por pin de `google-colab`. **A DEPRECAR / refactorizar** para Vast.ai (D9: mantener formato `.ipynb`, eliminar bootstrap Colab, conectar a kernel `tracka`).
 
 **Notebook Track B — estado actual:**
-- No fue intervenido en esta sesión. Asumir mismo nivel de bootstrap defensivo que Track A.
-- Validar antes de convertir a `.py`.
+- No fue intervenido en sesiones previas. Asumir mismo nivel de bootstrap defensivo que Track A.
+- Validar antes de adaptar.
 
 ---
 
-## 5. Próximos pasos priorizados (5 tareas)
+## 5. Próximos pasos priorizados (4 tareas operativas)
 
-### #1 — Crear `mitgar14/embebidos-3-models` en HF Hub (privado)
+> **Tarea #1 del handoff original (crear repo HF Hub) ya completada.** GitHub repo también pusheado.
 
-**Pre-requisito de #2, #3, #4 y #5.** Sin esto, los scripts no tienen
-destino para `CommitScheduler` ni `upload_folder`.
+### #2' — Adaptar `notebooks/train_track_a_ssd.ipynb` para Vast.ai (Track A)
 
-```python
-from huggingface_hub import HfApi
-api = HfApi()
-api.create_repo(
-    repo_id="mitgar14/embebidos-3-models",
-    repo_type="model",
-    private=True,
-    exist_ok=True,
-)
-# Estructura inicial vía commit dummy:
-# track_a/runs/, track_a/checkpoints/, track_a/exports/, track_a/logs/
-# track_b/runs/, track_b/checkpoints/, track_b/exports/, track_b/logs/
-```
+**Mantener formato `.ipynb`** (D9). NO convertir a `.py` con jupytext.
 
-Verificar token HF en `$env:HF_TOKEN` (Windows) o `~/.cache/huggingface/token`.
-
-### #2 — Convertir `train_track_a_ssd.ipynb` → `scripts/train_track_a.py`
-
-```bash
-uv run jupytext --to py:percent notebooks/train_track_a_ssd.ipynb \
-  -o scripts/train_track_a.py
-```
-
-Adaptaciones obligatorias en `scripts/train_track_a.py`:
+Adaptaciones requeridas:
 - **Eliminar** bootstrap defensivo Colab (`condacolab`, `mamba install python=3.10`, `sys.exit(0)`, `IPython.get_ipython().kernel.do_shutdown`).
 - **Eliminar** detección `IS_COLAB` (siempre `False` en Vast.ai).
+- **Header del notebook**: añadir celda markdown con instrucciones de uso (kernel `tracka`, ejecución vía `tmux + nbconvert`, watchdog).
 - **Pin SHA** en `git clone tensorflow/models`: `git checkout 9cafa3d150`.
-- **Instalación TF Object Detection API** con `--no-deps` + force-reinstall de `Pillow==10.4.0`, `protobuf==3.20.3`, `grpcio-tools==1.64.1`.
+- **Convertidor TFLite con flags D12**:
+  ```python
+  converter.experimental_new_quantizer = False
+  converter.experimental_new_converter  = False
+  ```
 - **Inyectar `CommitScheduler`** para checkpoints cada 5 min al repo HF.
-- **Inyectar `HFSummaryWriter`** para TensorBoard logs en lugar de `tf.summary.FileWriter`.
-- **Variables de entorno** para configuración (NO hardcodear paths Colab): `DATASET_DIR`, `OUTPUT_DIR`, `HF_REPO_ID`, `HF_TOKEN`.
+- **Inyectar `HFSummaryWriter`** para TensorBoard logs.
+- **Variables de entorno** para configuración: `DATASET_DIR`, `OUTPUT_DIR`, `HF_REPO_ID`, `HF_TOKEN`, `VAST_CONTAINERLABEL`, `VAST_API_KEY`.
+- **Validación in-notebook obligatoria (D12)** post-export:
+  - Inspección `op_version` con paquete `tflite==2.5.0`.
+  - Carga test con `tflite_runtime==2.5.0.post1` (wheel Coral CP38).
+  - Si custom op falta, plan B D15 (wheel Coral CP36 para deploy).
+- **Última celda obligatoria** (D11):
+  ```python
+  from pathlib import Path
+  import subprocess, os
+  # Upload artefactos finales a HF Hub
+  # ... HfApi.upload_folder(folder_path="track_a/exports", path_in_repo="track_a/exports", repo_id="mitgar14/embebidos-3-models") ...
+  Path("/workspace/embebidos-3/.training_done").touch()
+  container_id = os.environ.get("VAST_CONTAINERLABEL", "").lstrip("C.")
+  if container_id:
+      subprocess.run(["vastai", "destroy", "instance", container_id], check=False)
+  ```
 
-### #3 — Convertir `train_track_b_yolov8.ipynb` → `scripts/train_track_b.py`
+### #3' — Adaptar `notebooks/train_track_b_yolov8.ipynb` (Track B)
 
-Análogo a #2:
-```bash
-uv run jupytext --to py:percent notebooks/train_track_b_yolov8.ipynb \
-  -o scripts/train_track_b.py
-```
-
-Adaptaciones:
-- **W&B nativo:** `model.train(..., project="embebidos-3", name="track_b_yolov8n", wandb=True)`.
+Análogo a #2'. Adaptaciones específicas:
+- **Header del notebook**: kernel `trackb`, ejecución vía `tmux + nbconvert`.
 - **Pin `numpy<2.0` ANTES** de `pip install ultralytics==8.4.46` (PR #24028 fix).
 - **`onnxslim` (NO `onnxsim`)** para optimización del `.onnx`.
+- **Export ONNX** con flags D13:
+  ```python
+  model.export(format="onnx", imgsz=416, opset=11,
+               simplify=True, dynamic=False, nms=False)
+  ```
+- **W&B nativo:** `model.train(..., project="embebidos-3", name="track_b_yolov8n", wandb=True)`.
 - **Cascada Roboflow** conservada (descargar dataset desde Roboflow universe vía SDK).
+- **Validación in-notebook obligatoria (D13)** post-export:
+  - Inspección ops contra blacklist TRT 8.2 (`GridSample`, `ConstantOfShape` con tipo no-FP32).
+  - `polygraphy run` vía Docker NGC `nvcr.io/nvidia/tensorrt:21.11-py3` (si Docker-in-Docker está disponible en el container Vast.ai; alternativa: corrida en máquina x86 separada).
+- **NO entrenar INT8** (D14: FP16-only por default).
 - **Push final** `best.pt` + `best.onnx` + metadata a `track_b/exports/`.
+- **Última celda obligatoria** análoga a #2' con watchdog signal.
 
-### #4 — Implementar `scripts/run.sh` (entrypoint Vast.ai)
+### #4' — Implementar `scripts/bootstrap.sh` (entrypoint Vast.ai)
 
-Plantilla base (del agente research-code, ya documentada en Ronda 4):
+Plantilla completa documentada en `2026-05-12-notebook-persistente-uv-jetson.md` §E.1. Reglas clave:
+- Variables requeridas: `HF_TOKEN`, `WANDB_API_KEY`, `VAST_API_KEY`, `ROBOFLOW_API_KEY`.
+- Crear dos `uv venv` separados (`/opt/venv/tracka` + `/opt/venv/trackb`).
+- Registrar ambos como kernels ipykernel (`tracka`, `trackb`).
+- Instalar `vastai` CLI + registrar cron watchdog.
+- Configurar `/root/.jupyter/jupyter_server_config.py` con:
+  ```python
+  c.MappingKernelManager.cull_idle_timeout = 0
+  c.MappingKernelManager.cull_busy = False
+  c.MappingKernelManager.cull_connected = False
+  c.ServerApp.shutdown_no_activity_timeout = 0
+  c.ZMQChannelsWebsocketConnection.iopub_msg_rate_limit = 0
+  c.ZMQChannelsWebsocketConnection.iopub_data_rate_limit = 10_000_000
+  ```
+- Reiniciar JupyterLab al final (`supervisorctl restart jupyter`).
+- Logs a `/workspace/embebidos-3/logs/bootstrap.log`.
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+### #5' — Implementar `scripts/validate_artifacts.py` (validación pre-deploy)
 
-# Variables requeridas (export antes de invocar)
-: "${HF_TOKEN:?requerido}"
-: "${WANDB_API_KEY:?requerido}"
-: "${CONTAINER_ID:?requerido}"
-: "${CONTAINER_API_KEY:?requerido}"
+CLI con flags `--track {A,B}` y `--model <path>`. Tres gates:
 
-REPO_URL="https://github.com/mitgar14/embebidos-3.git"
-TRACK="${1:-A}"
-
-# Auto-destroy en cualquier salida (éxito o error)
-trap 'vastai destroy instance "$CONTAINER_ID" --api-key "$CONTAINER_API_KEY"' EXIT
-
-git clone --depth=1 "$REPO_URL" /workspace/embebidos-3
-cd /workspace/embebidos-3
-curl -LsSf https://astral.sh/uv/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
-
-if [ "$TRACK" = "A" ]; then
-  uv venv /opt/venv/tracka --python 3.10
-  source /opt/venv/tracka/bin/activate
-  uv pip install tensorflow==2.15.0 tf-models-official==2.15.0 \
-    Pillow==10.4.0 protobuf==3.20.3 grpcio-tools==1.64.1 \
-    huggingface_hub jupytext
-
-  git clone https://github.com/tensorflow/models.git /workspace/tf_models
-  cd /workspace/tf_models && git checkout 9cafa3d150
-  cd /workspace/embebidos-3
-
-  PYTHONPATH=/workspace/tf_models python scripts/train_track_a.py
-elif [ "$TRACK" = "B" ]; then
-  uv venv /opt/venv/trackb --python 3.10
-  source /opt/venv/trackb/bin/activate
-  uv pip install "numpy<2.0"
-  uv pip install torch==2.1.0+cu121 torchvision==0.16.0+cu121 \
-    --index-url https://download.pytorch.org/whl/cu121
-  uv pip install ultralytics==8.4.46 huggingface_hub wandb onnxslim roboflow
-
-  python scripts/train_track_b.py
-else
-  echo "Track desconocido: $TRACK"
-  exit 1
-fi
-```
-
-### #5 — Implementar `scripts/validate_artifacts.py` (validación pre-deploy)
-
-**Antes de empacar para el Nano**, validar que los artefactos son
-compatibles con TFLite runtime 2.5 y TensorRT 8.2.1.
-
+**Gate Track A (TFLite):**
 ```python
-# Track A — validar .tflite contra TF 2.5
-from tensorflow.lite.tools import flatbuffer_utils
-model = flatbuffer_utils.read_model("track_a/exports/model.tflite")
-# Gate: Cast op_version <= 1 (v2 requiere TF 2.7+)
-# Gate: BatchMatMul op_version <= 4 (v5+ requiere TF 2.6+)
-# Verificar custom op TFLite_Detection_PostProcess presente
-# Si falla: regenerar con TF 2.5 compat o agregar resolver.AddCustom() en Nano
-
-# Track B — validar .onnx contra TRT 8.2.1
-import subprocess
-subprocess.run([
-    "polygraphy", "run",
-    "track_b/exports/best.onnx",
-    "--trt", "--onnxrt",
-    "--tol", "1e-3",
-    "--input-shapes", "images:[1,3,416,416]",
-])
-# Gate: opset == 11, IR <= 10
-# Gate: ninguna op en TRT82_UNSUPPORTED blacklist
-# NMS debe estar fuera del grafo (postprocess CPU)
+# 1. Inspección op_version contra runtime 2.5 max
+# 2. Carga test con tflite_runtime==2.5.0.post1 wheel Coral CP38
+# 3. Reportar ops con version > soportada (CONV_2D v5, DEPTHWISE_CONV_2D v4-5, etc.)
+# 4. Si TFLite_Detection_PostProcess falta, marcar D15 fallback necesario
 ```
 
-`TRT82_UNSUPPORTED` blacklist documentado en
-`discover-17-onnx-trt-validation.md` y en sección Ronda 4 del doc principal.
+**Gate Track B (ONNX):**
+```python
+# 1. Inspección ops contra TRT82_UNSUPPORTED blacklist
+# 2. Verificar ConstantOfShape no usa tipos no-FP32
+# 3. polygraphy run via Docker NGC 21.11-py3 (--trt --onnxrt --atol 1e-2)
+# 4. Reportar engines build success + tiempo estimado
+```
+
+Salida estructurada (JSON + markdown). Exit code != 0 si gates fallan.
 
 ---
 
 ## 6. Credenciales y recursos externos
 
-### Confirmados / disponibles
+### Confirmados / configurados
 
 | Recurso | Estado | Notas |
 |---------|--------|-------|
 | **Vast.ai** | 1,72 USD saldo | Suficiente para 3-5 h RTX 4090 |
-| **HF Hub** | Cuenta `mitgar14` autenticada (vía `hf-mcp-server`) | Token vigente |
-| **GitHub** | Cuenta `mitgar14`, repo `embebidos-3` privado | Verificar push del código antes de Vast.ai run |
+| **HF Hub** | ✅ Cuenta `mitgar14` autenticada + repo creado | Token en `~/.cache/huggingface/token` |
+| **GitHub** | ✅ Cuenta `mitgar14`, repo `embebidos-3` privado pusheado | `gh auth setup-git` aplicado |
 | **Roboflow** | Dataset Track B en Roboflow universe | Verificar API key en `.env` |
 | **W&B** | Asumir cuenta existente | Verificar `WANDB_API_KEY` antes del primer run |
 
 ### Por configurar antes del primer run
 
-- [ ] Push del repo `embebidos-3` a GitHub (verificar `git remote -v`)
-- [ ] Crear repo `mitgar14/embebidos-3-models` en HF Hub (paso #1)
+- [x] Push del repo `embebidos-3` a GitHub
+- [x] Crear repo `mitgar14/embebidos-3-models` en HF Hub
 - [ ] Configurar `vastai` CLI local con API key (`vastai set api-key <KEY>`)
-- [ ] Definir `.env` con: `HF_TOKEN`, `WANDB_API_KEY`, `ROBOFLOW_API_KEY`, `CONTAINER_API_KEY`
+- [ ] Definir `.env` con: `HF_TOKEN`, `WANDB_API_KEY`, `ROBOFLOW_API_KEY`, `VAST_API_KEY`
+- [ ] Generar deploy key o personal access token con scope `repo` para `git clone` desde el container Vast.ai
 
 ---
 
@@ -286,18 +279,21 @@ subprocess.run([
 El nuevo agente debe ejecutar al inicio:
 
 ```bash
-mnemon recall "embebidos-3 Ronda 4 vastai HF Hub decisiones" --limit 5
+mnemon recall "embebidos-3 Ronda 5 decisiones D9-D15" --limit 5
+mnemon recall "embebidos-3 Vast.ai uv JupyterLab notebook persistente" --limit 5
 mnemon recall "Jetson Nano JetPack 4.6.1 stack frameworks" --limit 5
 mnemon recall "Logitech C920 OG pipeline GStreamer" --limit 3
 ```
 
 Memorias críticas confirmadas (IDs):
 
-- **`3a13d0dc-...`** (importance 5) — Decisiones vinculantes Ronda 4 completas
+- **`61bcbacb-833d-4b48-b80e-9e7982254f40`** (importance 5) — **R5 decisiones D9–D15 vinculantes** (reemplazó la `6695ef85` previa de R4)
+- **`6ada3f23-c7d0-46ce-9d84-ba7fdda3db34`** (importance 4) — Preferencia uv sobre virtualenv
+- **`087d0816-ab17-4980-b8f7-727e4b97ca00`** (importance 4) — Fix `gh auth setup-git` vs Git Credential Manager en Windows
 - **`9dbed942-...`** (importance 4) — Cámara C920 OG seleccionada (no C930e)
 - **`355dd78a-...`** (importance 4) — JetPack 4.6.x usa `focus_auto` (legacy), no `focus_automatic_continuous`
-- **`050d8504-...`** (importance 5) — Perfil del usuario (UAO, semestre 7, materia IA en Embebidos)
-- **`1d6d237e-...`** (importance 4) — Alternativas Vast.ai si falla: RunPod (PyTorch 2.6-2.9 solo), Lambda Labs, Paperspace, cluster UAO `uaodeepia11306`
+- **`050d8504-...`** (importance 5) — Perfil del usuario (UAO, semestre 7, IA en Embebidos)
+- **`1d6d237e-...`** (importance 4) — Alternativas Vast.ai si falla: RunPod, Lambda Labs, Paperspace
 
 ---
 
@@ -306,95 +302,164 @@ Memorias críticas confirmadas (IDs):
 ### Colab (a evitar — solo informativo)
 1. `condacolab.check()` → `AssertionError`, NO `False`. Usar `install_from_url()` directo.
 2. Miniforge 23.11.0-0 → Python **3.12**, no 3.10. Release notes engañan.
-3. `mamba install python=3.10` falla en Colab por pin `google-colab` → 3.12. **No es fixeable.** Es por esto que migramos a Vast.ai.
+3. `mamba install python=3.10` falla en Colab por pin `google-colab` → 3.12. **No es fixeable.** Migración a Vast.ai cerrada.
 4. `do_shutdown(True)` es **asíncrono** → necesita `sys.exit(0)` después.
 5. Heredoc bash con `\\n` rompe f-strings Python triple-quoted. Usar archivo `.py` separado.
 6. `list(string)` produce chars individuales. Usar `splitlines(keepends=True)`.
 
-### Vast.ai (aplicable a la implementación)
+### Vast.ai
 7. **Container storage NO portable** entre instancias. Todo lo persistente debe ir a HF Hub.
-8. **PyTorch 2.1+cu121** debe instalarse con `--index-url https://download.pytorch.org/whl/cu121` (no PyPI default).
+8. **PyTorch 2.1+cu121** debe instalarse con `--index-url https://download.pytorch.org/whl/cu121`.
 9. **`numpy<2.0` ANTES** de `ultralytics==8.4.46` o el solver lo arrastra a numpy 2.x.
 10. **Pin SHA TF Models** `9cafa3d150` — versiones posteriores rompen con TF 2.15.
+11. **Vast.ai CLI NO tiene `--auto-stop` ni `--idle-timeout`** (GAP confirmado R5). Imprescindible cron watchdog + última celda con `vastai destroy` (D11).
+12. **GPU idle shutdown NO existe** en Vast.ai (GAP confirmado R5).
+13. **`$VAST_CONTAINERLABEL`** viene como `C.<id>`. Extraer `${VAST_CONTAINERLABEL#C.}`.
+14. **`pip install polygraphy tensorrt`** en container CUDA 12.4 instala TRT 10+, **no 8.2**. Obligatorio Docker NGC `21.11-py3` (D13).
+
+### JupyterLab persistente (R5)
+15. **Kernel sobrevive disconnect** solo si `cull_idle_timeout=0`, `cull_busy=False`, `cull_connected=False`, `shutdown_no_activity_timeout=0`.
+16. **Output NO se recupera al reconectar** — solo el guardado en `.ipynb` (autosave 120 s). Patrón obligatorio: `tmux + nbconvert --execute --inplace`.
+17. **`iopub_msg_rate_limit` y `iopub_data_rate_limit` default truncan output** de runs verbosos. Subir a 0 / 10 MB.
+18. **Notebook > 25 MB** rompe autosave. Usar `%%capture` en instalaciones, `tqdm` resumido, log a archivo.
 
 ### Jetson Nano (deploy final)
-11. TRT engines son **GPU-specific + TRT-version-specific**. Siempre compilar en el Nano.
-12. `TFLite_Detection_PostProcess` es **custom op**, no built-in. Necesita `resolver.AddCustom(...)` en el runtime de inferencia.
-13. `Cast v2` requiere TF 2.7+ (en Nano hay 2.5). `BatchMatMul v5+` requiere TF 2.6+. Si el exporter usa estas versiones, el `.tflite` fallará con `kTfLiteError`.
-14. Maxwell `sm_53` **sin Tensor Cores INT8** → drop empírico de PTQ no caracterizado en literatura.
-15. JetPack 4.6.x usa `focus_auto` v4l2 control (legacy), no `focus_automatic_continuous`.
+19. TRT engines son **GPU-specific + TRT-version-specific**. Siempre compilar en el Nano.
+20. `TFLite_Detection_PostProcess` es **custom op**. Si el wheel NVIDIA no lo incluye, fallback wheel Coral CP36 aarch64 (D15).
+21. `Cast v2` requiere TF 2.7+ (Nano tiene 2.5). `BatchMatMul v5+` requiere TF 2.6+. **CONV_2D v5** confirmado problemático (issues #41943, #50652, #43232). Usar `experimental_new_quantizer=False`.
+22. Maxwell `sm_53` **sin `dp4a`** → INT8 estructuralmente sin speedup. Track B FP16-only por default (D14).
+23. JetPack 4.6.x usa `focus_auto` v4l2 control (legacy), no `focus_automatic_continuous`.
 
 ### Generales
-16. Tildes obligatorias en español (regla CLAUDE.md global, bug #34779 Claude Code).
-17. `mnemon` solo en sub-agent (NUNCA en conversación principal) — esta sesión tuvo excepciones porque eran operaciones triviales.
-18. Notebooks autocontenidos con heartbeat monitoring (preservar este patrón al convertir a `.py`).
-19. Comentarios en español con technical code-switching.
+24. Tildes obligatorias en español (regla CLAUDE.md global, bug #34779 Claude Code).
+25. `mnemon` solo en sub-agent (NUNCA en conversación principal) — esta regla se aplicó consistentemente en R4-R5.
+26. Comentarios en español con technical code-switching.
+27. **Git Credential Manager en Windows** puede tener credenciales viejas. Si `git push` falla con "repository is disabled" pero `gh repo view` muestra el repo OK, aplicar `gh auth setup-git`.
 
 ---
 
-## 9. Gaps de evidencia (no resueltos)
+## 9. Gaps de evidencia (estado actualizado)
 
-Documentados en Ronda 4. **Riesgos reales sin mitigación posible
-hasta medir empíricamente:**
+### Cerrados o mitigados en R5
 
-1. **Drop INT8 YOLOv8n en Maxwell `sm_53`** — toda evidencia es `sm_75+`.
-   Si excede 10 pp, fallback a FP16 only en Track B.
-2. **Compatibilidad TFLite forward de `tf-models-official 2.15`** con
-   runtime TF 2.5 del Nano — no probado directamente con detector SSD.
-3. **Custom op resolver runtime** en Python 3.6.9 del Nano — verificar
-   que `tflite_runtime` 2.7 esté disponible vía pip wheel.
-4. **Polygraphy + AssemblyAI**-style tools en TRT 8.2.1 — versiones
-   recientes asumen TRT 10+.
+1. ~~Drop INT8 YOLOv8n en Maxwell `sm_53` — toda evidencia es `sm_75+`.~~ → **Cerrado** por mecanismo físico: `dp4a` no existe en sm_53. Speedup INT8 estructuralmente nulo. Fallback FP16-only (D14).
+2. ~~Compatibilidad TFLite forward de `tf-models-official 2.15` con runtime TF 2.5.~~ → **Mitigado** con D12 (`experimental_new_quantizer=False`) + validación in-notebook obligatoria.
+3. ~~Polygraphy + TRT 8.2.1 en versiones recientes.~~ → **Cerrado**: polygraphy 0.49.27 funciona con TRT 8 vía Docker NGC `tensorrt:21.11-py3`.
+
+### Abiertos (mitigaciones documentadas)
+
+4. **`op_version` de `DEPTHWISE_CONV_2D` y `FULLY_CONNECTED` en TF 2.15 INT8 PTQ** sin docs públicas. Mitigación: inspección flatbuffer obligatoria (D12 + script `validate_artifacts.py`).
+5. **Wheel NVIDIA `tensorflow==2.5.0+nv21.8` y `TFLite_Detection_PostProcess`** sin confirmación verbatim. Mitigación: D15 fallback wheel Coral.
+6. **Custom op resolver runtime en Python 3.6.9 del Nano** — verificar `tflite_runtime 2.5` esté disponible vía pip wheel Coral (verificado disponible en R5).
+7. **Drop empírico de PTQ TFLite SSD MV2 plain en dataset waste 3-clase** — sin medir hasta ejecutar Track A. No mitigable sin training.
 
 ---
 
 ## 10. Cómo retomar (instrucciones para el nuevo agente)
 
 1. **Lee este documento de arriba a abajo.** No tomes atajos.
-2. Ejecuta los `mnemon recall` de §7 para cargar contexto de memoria
-   persistente.
+2. Ejecuta los `mnemon recall` de §7 para cargar contexto.
 3. **Verifica el estado del repo:**
    ```bash
    cd C:\Users\mitgar14\Documentos\embebidos-3
    git status
+   git log --oneline -3
    git remote -v
    ```
-4. **Confirma con el usuario por cuál tarea arrancar.** Recomendación:
-   **#1 + #2 en paralelo** — el repo HF Hub es trivial (un
-   `HfApi.create_repo()`) y la conversión jupytext de Track A es la de
-   mayor riesgo de regresión.
+4. **Decisión clave del próximo paso:**
+   - Consolidación §11 **YA ejecutada**. Carpeta `investigaciones/2026-05-12/` reducida a 6 archivos (HANDOFF + 5 consolidados).
+   - Arrancar por **#2' + #3'** en paralelo (recomendado), o solo #4' (`bootstrap.sh`) si quieres ver el flujo completo antes de tocar notebooks.
 5. **No iniciar implementación sin confirmación explícita del usuario.**
-   El usuario ha sido específico sobre decisiones (no me importan
-   costos, mejor GPU, HF Hub persistencia) pero no ha dicho
-   *"implementa"* aún.
-6. **Si surge ambigüedad técnica**, consulta primero el doc principal
-   (`2026-05-12-compatibilidad-notebooks-training.md`) sección Ronda 4
-   antes de preguntar al usuario.
+6. **Si surge ambigüedad técnica**, consulta primero `decisiones-D1-D15-ledger.md` (índice maestro) y desde ahí salta al doc consolidado correspondiente. Si persiste, preguntar al usuario.
 
-### Lectura prioritaria
+### Lectura prioritaria (en orden)
 
 | Doc | Por qué |
 |-----|---------|
-| `investigaciones/2026-05-12/2026-05-12-compatibilidad-notebooks-training.md` (Ronda 4) | Plan operativo completo, gotchas, decisiones técnicas |
-| `investigaciones/2026-05-12/discover-13-vastai-dual-stack.md` | Detalles del container Vast.ai |
-| `investigaciones/2026-05-12/discover-14-hf-hub-training.md` | Patrones `CommitScheduler`, `upload_large_folder` |
-| `investigaciones/2026-05-12/discover-15-headless-notebooks.md` | jupytext + papermill workflow |
-| `investigaciones/2026-05-12/discover-16-tflite-fwdcompat.md` | TFLite forward compat con TF 2.5 |
-| `investigaciones/2026-05-12/discover-17-onnx-trt-validation.md` | Polygraphy + TRT 8.2.1 blacklist |
-| `notebooks/train_track_a_ssd.ipynb` | Estado actual cell-8 v4 (a deprecar) |
+| **ESTE handoff** | Plan operativo, decisiones D1-D15 consolidadas, gotchas |
+| `decisiones-D1-D15-ledger.md` | Índice maestro D1-D15 verbatim + razones + trail entre rondas + cross-refs |
+| `compatibilidad-stack-cloud-jetson.md` | Hardware Nano + por qué Vast.ai + stack Track A/B + pin SHA `9cafa3d150` |
+| `infraestructura-training-vastai-uv-hf.md` | D9 (`.ipynb` + tmux+nbconvert) + D10 (uv dual venv) + D5 (CommitScheduler) + D6 (W&B) + D11 (cron+vastai destroy) + `bootstrap.sh` completo |
+| `validacion-artefactos-pre-deploy.md` | 4 gates (op_version TFLite + ONNX ops + Polygraphy NGC) + plan B Coral CP36 + protocolo experimento INT8 opcional |
+| `dataset-roboflow-yolov8.md` | Dataset Roboflow Version 1-B 416×416 + bug `location` workaround + hyperparameters YOLOv8n + export ONNX flags |
+| `notebooks/train_track_a_ssd.ipynb` | Estado actual cell-8 v4 (a refactorizar, NO deprecar el .ipynb en sí) |
 | `notebooks/train_track_b_yolov8.ipynb` | Estado actual Track B |
 
 ### Lo que NO debes hacer
 
 - ❌ Reintentar Colab (decisión cerrada).
-- ❌ Cambiar las 8 decisiones vinculantes sin nueva ronda /investiga.
+- ❌ Cambiar las decisiones D1-D15 sin nueva ronda `/investiga`.
 - ❌ Implementar sin confirmación explícita del usuario.
 - ❌ Transferir TRT engines entre máquinas — siempre compilar en Nano.
-- ❌ Hardcodear paths Colab en los `.py` headless.
-- ❌ Omitir el `trap EXIT` en `run.sh` (riesgo de billing acumulado).
+- ❌ Hardcodear paths Colab en los notebooks.
+- ❌ Convertir `.ipynb` a `.py` con jupytext (D9 reemplazó D4).
+- ❌ Usar `trap EXIT` puro para auto-destroy (D11 reemplazó D7).
+- ❌ Instalar `polygraphy tensorrt` directo en container CUDA 12.4 (instala TRT 10, no 8.2). Usar Docker NGC `21.11-py3`.
+
+---
+
+## 11. Consolidación de `investigaciones/2026-05-12/` (EJECUTADA)
+
+> **Estado:** ✅ Ejecutada 2026-05-12. Reducción 20 → 6 archivos (handoff + 5 consolidados autocontenidos). Pendiente solo el commit final en working tree (decisión del usuario: agrupar todo en un commit único al cierre).
+
+### 11.1 Resultado
+
+| Doc nuevo | Líneas | Foco |
+|-----------|--------|------|
+| `decisiones-D1-D15-ledger.md` | 602 | Índice maestro D1–D15 verbatim + razones + trail R4↔R5 + cross-refs |
+| `compatibilidad-stack-cloud-jetson.md` | 636 | Hardware Nano B01 + JetPack 4.6.1 + por qué NO Colab/Kaggle + por qué SÍ Vast.ai + stack Track A/B + pin SHA `9cafa3d150` + tabla `op_version` |
+| `infraestructura-training-vastai-uv-hf.md` | 999 | D9 (`.ipynb`+tmux+nbconvert) + D10 (uv dual venv `/opt/venv/{tracka,trackb}` + kernels ipykernel) + D5 (CommitScheduler + upload_folder) + D6 (W&B + TensorBoard hosted) + D11 (cron+vastai destroy) + `bootstrap.sh` completo |
+| `validacion-artefactos-pre-deploy.md` | 846 | Gate 1 (op_version TFLite 2.5 max) + Gate 2 (carga test wheel Coral CP38) + Gate 3 (ONNX ops blacklist TRT 8.2) + Gate 4 (Polygraphy NGC `tensorrt:21.11-py3`) + drop INT8 Maxwell sm_53 + plan B Coral CP36 aarch64 (sha256) + protocolo experimento INT8 opcional |
+| `dataset-roboflow-yolov8.md` | 679 | Dataset Roboflow `embebidos3/waste-3class-lwld8` Version 1-B 416×416 yolov8 + bug `location` workaround cascada (~50 líneas Python) + Ultralytics 8.4.46 + `numpy<2.0` + `onnxslim` + hyperparameters YOLOv8n + export ONNX flags + 14 gotchas Track B |
+
+**Total consolidado:** 3 762 líneas absorbidas en 5 docs autocontenidos.
+
+### 11.2 Mapeo 19 → 5 (auditoría)
+
+| Doc viejo eliminado | → Absorbido en |
+|--------------------|----------------|
+| `2026-05-12-compatibilidad-notebooks-training.md` (R4, ~1300 líneas) | `compatibilidad-stack-cloud-jetson.md` + `decisiones-D1-D15-ledger.md` |
+| `2026-05-12-notebook-persistente-uv-jetson.md` (R5, ~750 líneas) | `infraestructura-training-vastai-uv-hf.md` + `validacion-artefactos-pre-deploy.md` + `decisiones-D1-D15-ledger.md` |
+| `discover-1-jetpack-tflite.md` | `compatibilidad-stack-cloud-jetson.md` §JetPack |
+| `discover-2-colab-tfod.md` | `compatibilidad-stack-cloud-jetson.md` §por qué NO Colab |
+| `discover-3-mediapipe-mm.md` | `decisiones-D1-D15-ledger.md` (D1 trail) |
+| `discover-4-yolov8-trt.md` | `compatibilidad-stack-cloud-jetson.md` §Track B + `validacion-artefactos-pre-deploy.md` §Gate 3 |
+| `discover-5-roboflow-bug.md` | `dataset-roboflow-yolov8.md` §3 bug `location` |
+| `discover-6-tfod-api-pillow-protobuf.md` | `compatibilidad-stack-cloud-jetson.md` §Track A pins |
+| `discover-7-model-main-tf2-output.md` | `compatibilidad-stack-cloud-jetson.md` §pin SHA `9cafa3d150` |
+| `discover-8-condacolab-subprocess.md` | `decisiones-D1-D15-ledger.md` (D1 descartado por D9) |
+| `discover-9-ultralytics-onnx.md` | `dataset-roboflow-yolov8.md` §4-5 + `validacion-artefactos-pre-deploy.md` §Gate 3 |
+| `discover-10-kaggle-stack.md` | `compatibilidad-stack-cloud-jetson.md` §por qué NO Kaggle |
+| `discover-11-onnx-trt-nano.md` | `validacion-artefactos-pre-deploy.md` §Gate 3-4 |
+| `discover-12-roboflow-sdk.md` | `dataset-roboflow-yolov8.md` §3 workaround |
+| `discover-13-vastai-dual-stack.md` | `infraestructura-training-vastai-uv-hf.md` §D10 |
+| `discover-14-hf-hub-training.md` | `infraestructura-training-vastai-uv-hf.md` §D5 |
+| `discover-15-headless-notebooks.md` | `infraestructura-training-vastai-uv-hf.md` §D9 |
+| `discover-16-tflite-fwdcompat.md` | `validacion-artefactos-pre-deploy.md` §Gate 1 |
+| `discover-17-onnx-trt-validation.md` | `validacion-artefactos-pre-deploy.md` §Gate 3-4 |
+
+### 11.3 Garantías de no-pérdida verificadas
+
+- ✅ Cada decisión D1-D15 aparece verbatim en `decisiones-D1-D15-ledger.md` con razón + fuente primaria + estado + Ronda de origen.
+- ✅ Comandos copy-paste (uv venv, ipykernel install, tmux+nbconvert, polygraphy, vastai destroy) preservados en `infraestructura-training-vastai-uv-hf.md`.
+- ✅ URLs y sha256 (wheel Coral CP38 x86, wheel Coral CP36 aarch64 sha256 `7c58b1a9fb2d2b24d6f0b0f8629ede7d288358e2cb93c68c3e4f78fd0ee7d1df`) preservados en `validacion-artefactos-pre-deploy.md`.
+- ✅ Versiones pinned (TF 2.15, Pillow 10.4, protobuf 3.20.3, grpcio-tools 1.64.1, ultralytics 8.4.46, numpy<2.0, torch 2.1+cu121) preservados en `compatibilidad-stack-cloud-jetson.md`.
+- ✅ Cada gotcha de §8 de este handoff tiene su correlato extendido en el doc consolidado correspondiente.
+- ✅ Cada gap residual de §9 aparece con su mitigación en el doc consolidado correspondiente.
+
+### 11.4 Cómo auditar si surge duda
+
+```powershell
+# Reconstruir docs viejos desde el commit anterior al rm:
+git log --oneline -- investigaciones/2026-05-12/
+git show <SHA>:investigaciones/2026-05-12/<doc-viejo>.md
+```
+
+El commit que stage la eliminación (working tree actual) deja el snapshot pre-rm como parent → siempre recuperable vía `git show`.
 
 ---
 
 **Fin del handoff.** Si algo no es claro, vuelve a leer §3 (decisiones)
-y §5 (próximos pasos). La Ronda 4 está cerrada — el siguiente paso
-es ejecutar, no investigar más.
+y §5 (próximos pasos). Las Rondas 4 y 5 están cerradas y la
+consolidación §11 ejecutada — el siguiente paso es ejecutar
+**#2'-#5'** del plan operativo.
