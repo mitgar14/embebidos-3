@@ -1,0 +1,41 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Data
+data/
+
+# Obsidian (configuración local de la bóveda)
+.obsidian/
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# Artefactos de modelos pesados (persistir en HF Hub, no en git)
+*.tflite
+*.engine
+*.onnx
+*.pt
+*.h5
+*.pb
+*.tflite_graph.pb
+
+# Logs y outputs de experimentos
+wandb/
+runs/
+outputs/
+mlruns/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
