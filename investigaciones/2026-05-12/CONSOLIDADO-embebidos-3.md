@@ -5458,50 +5458,10 @@ Pendientes que no se cierran en este consolidado. Documentados para tracking —
 2. §40 (Ledger D1-D28) muestra cada decisión con su ronda origen.
 3. §45 (Gaps G1-G12) muestra lo que sabemos que NO sabemos.
 
-### 46.5 Eliminación de los archivos fuente
-
-Una vez validado este consolidado (Ctrl+F sobre términos clave: `rtl871xdrv`, `Polygraphy`, `CommitScheduler`, `dummy HDMI`, `--accept-dns=false`, `tflite==2.5.0`, `NL80211_TIMEOUT_UNSPECIFIED`, `wireguard-go`, `nbconvert --execute --inplace`, `sm_53`, `9cafa3d150`), los siguientes archivos quedan **redundantes** y pueden eliminarse:
-
-- `decisiones-D1-D15-ledger.md` → consolidado en §40
-- `compatibilidad-stack-cloud-jetson.md` → consolidado en §3-§7, §43.1
-- `infraestructura-training-vastai-uv-hf.md` → consolidado en §8-§13, §43.2
-- `validacion-artefactos-pre-deploy.md` → consolidado en §14-§22, §43.3
-- `dataset-roboflow-yolov8.md` → consolidado en §6.4, §43.4
-- `acceso-remoto-wifi-jetson-nano.md` → consolidado en §25-§39, §43.5-§43.8
-
-Comando de eliminación (después de validar):
-
-```powershell
-# Opción A: borrado directo (git log preserva historia):
-Remove-Item -Path "C:\Users\mitgar14\Documentos\embebidos-3\investigaciones\2026-05-12\decisiones-D1-D15-ledger.md"
-Remove-Item -Path "C:\Users\mitgar14\Documentos\embebidos-3\investigaciones\2026-05-12\compatibilidad-stack-cloud-jetson.md"
-Remove-Item -Path "C:\Users\mitgar14\Documentos\embebidos-3\investigaciones\2026-05-12\infraestructura-training-vastai-uv-hf.md"
-Remove-Item -Path "C:\Users\mitgar14\Documentos\embebidos-3\investigaciones\2026-05-12\validacion-artefactos-pre-deploy.md"
-Remove-Item -Path "C:\Users\mitgar14\Documentos\embebidos-3\investigaciones\2026-05-12\dataset-roboflow-yolov8.md"
-Remove-Item -Path "C:\Users\mitgar14\Documentos\embebidos-3\investigaciones\2026-05-12\acceso-remoto-wifi-jetson-nano.md"
-
-# Opción B: mover a carpeta originales/ (más conservador):
-New-Item -ItemType Directory -Force -Path "C:\Users\mitgar14\Documentos\embebidos-3\investigaciones\2026-05-12\originales"
-Move-Item -Path "C:\Users\mitgar14\Documentos\embebidos-3\investigaciones\2026-05-12\decisiones-D1-D15-ledger.md" -Destination "C:\Users\mitgar14\Documentos\embebidos-3\investigaciones\2026-05-12\originales\"
-# (repetir para los otros 5)
-```
-
-Tras eliminar/mover, hacer commit en git:
-
-```bash
-git add -A
-git commit -m "docs(investigacion): consolidar 6 archivos fuente en CONSOLIDADO-embebidos-3.md exhaustivo"
-```
-
-Si en el futuro se necesita un archivo eliminado, recuperarlo con:
-
-```bash
-git log --diff-filter=D --summary | grep delete
-git checkout <SHA>~1 -- investigaciones/2026-05-12/<ARCHIVO>.md
-```
-
 ---
 
 **FIN DEL CONSOLIDADO**
 
-Este documento sustituye los 6 archivos fuente listados en §46.5 sin pérdida de contenido. Total: 46 secciones organizadas en 7 partes. Para añadir nuevas rondas de investigación (R9+), agregarlas como nuevas subsecciones bajo la parte correspondiente y actualizar §40 (Ledger), §43 (Fuentes), §44 (Historial), §45 (Gaps) en paralelo.
+Este documento sustituye sin pérdida de contenido los 6 archivos fuente que existieron en `investigaciones/2026-05-12/` y fueron eliminados en commit `062b247` (2026-05-13): `decisiones-D1-D15-ledger.md` (→ §40), `compatibilidad-stack-cloud-jetson.md` (→ §3-§7, §43.1), `infraestructura-training-vastai-uv-hf.md` (→ §8-§13, §43.2), `validacion-artefactos-pre-deploy.md` (→ §14-§22, §43.3), `dataset-roboflow-yolov8.md` (→ §6.4, §43.4), `acceso-remoto-wifi-jetson-nano.md` (→ §25-§39, §43.5-§43.8). Para recuperar el contenido original de cualquiera: `git checkout 062b247~1 -- investigaciones/2026-05-12/<ARCHIVO>.md`.
+
+Total: 46 secciones organizadas en 7 partes. Para añadir nuevas rondas de investigación (R9+), agregarlas como nuevas subsecciones bajo la parte correspondiente y actualizar §40 (Ledger), §43 (Fuentes), §44 (Historial), §45 (Gaps) en paralelo.
