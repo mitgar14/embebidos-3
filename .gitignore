@@ -11,6 +11,8 @@ wheels/
 
 # Data
 data/
+datasets/
+exports/
 
 # Obsidian (configuración local de la bóveda)
 .obsidian/
