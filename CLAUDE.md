@@ -1,0 +1,1 @@
+- Tenés acceso mediante SSH a la Jetson Nano: dentro del contexto de este proyecto tenés acceso a ella.

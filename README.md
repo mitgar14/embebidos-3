@@ -3,41 +3,49 @@
 > **MVP académico** para curso de IA en sistemas embebidos (UAO).
 > **Entrega:** 2026-05-26.
 > **Tarea:** detección de objetos en tiempo real sobre banda transportadora — 3 clases: `paper`, `glass`, `plastic`.
-> **Hardware target:** Jetson Nano Developer Kit 4 GB rev. B01, JetPack 4.6.x (Ubuntu 18.04, Python 3.6.9, CUDA 10.2, TensorRT 8.0.1/8.2.1, GPU Maxwell 128 CUDA cores **sin tensor cores INT8**).
-> **Actuación:** 3 servomotores SG90 vía PCA9685 (I2C) — rampas deflectoras por clase.
-> **Cámara:** USB UVC 720p/30 fps montada en diagonal sobre la banda.
+> **Hardware target:** Jetson Nano Developer Kit 4 GB rev. B01, **JetPack 4.6.1** (L4T R32.7.1, Ubuntu 18.04, Python 3.6.9, CUDA 10.2.300, TensorRT 8.2.1.8, GPU Maxwell `sm_53` 128 CUDA cores **sin tensor cores INT8**, sin instrucción `dp4a`).
+> **Actuación:** 3 servomotores SG90 vía PCA9685 (I²C) — rampas deflectoras por clase.
+> **Cámara:** Logitech C920 OG (USB UVC 720p) montada en diagonal sobre la banda.
 
 ---
 
-## 1. Reframing dual-track (lectura obligatoria antes de tocar código)
+## 1. Decisión arquitectónica — Track B exclusivo
 
-La decisión arquitectónica central NO es "INT8 vs FP16". Es **"backend hardware compatible con la GPU Maxwell del Nano B01"**:
+El proyecto se enfoca exclusivamente en **YOLOv8n → ONNX → TensorRT FP16** (Track B). Track A (SSD MobileNet v2 + TFLite INT8 sobre CPU) fue evaluado y **descartado el 2026-05-13** por dos razones:
 
-| Track | Modelo | Resolución | Cuantización | Backend en Nano | Razón |
-|-------|--------|-----------:|--------------|-----------------|-------|
-| **A** | SSD MobileNet v2 FPNLite | 320×320 | TFLite **INT8** (QAT) | CPU Cortex-A57 + XNNPACK + NEON SIMD | Maxwell carece de tensor cores INT8 (introducidos en Turing/Ampere); INT8 acelera vía instrucciones SIMD packed en CPU ARM. |
-| **B** | YOLOv8n | 416×416 | ONNX → TensorRT **FP16** | GPU Maxwell vía CUDA half-precision | FP16 es el sweet spot de Maxwell. Qengineering verbatim: *"INT8 no aumenta FPS y degrada mAP significativamente"* en Nano. |
+1. **Mejor rendimiento esperado en este hardware.** La GPU Maxwell de la Tegra X1 solo brilla con FP16 (no tiene tensor cores INT8 ni `dp4a`). Track A correría en CPU como en una Raspberry Pi 4 — desaprovecha el hardware.
+2. **Ahorro de tiempo de cara a la entrega 2026-05-26.** Track A depende de QAT obligatorio, calibración con representative dataset, `TFLite_Detection_PostProcess` embebido y cuatro gates pre-deploy. Track B también tiene gates pero son más predecibles, y el dataset 1-B en Roboflow ya está listo desde el 2026-05-11.
 
-Resultado documentado de literatura comparable (Nature Sci Rep oct 2024, DOI 10.1038/s41598-024-74798-3, Tabla 4):
+**Validación empírica (SSH 2026-05-13):** YOLOv8n FP16 416×416 corre a **~40 FPS / 25 ms** end-to-end en este Jetson Nano específico (JP 4.6.1), **superando la predicción de Nature 2024 Tabla 4 (30 FPS)**. El margen sobre el threshold MVP (≥10 FPS) es 4×, dejando holgura para concurrencia con los servos.
 
-- YOLOv8n + TensorRT FP16 Jetson Nano: **30 FPS @ 416×416** vs 24 FPS @ 640×640.
-- SSD MobileNet v2 FPNLite 320×320 INT8 + XNNPACK 4 hilos: ~11-16 FPS extrapolado de NobuoTsukamoto/benchmarks + Tobiasz 2023.
+**Stack training vs runtime**
 
-**No es una guerra**: ambos tracks corren en paralelo. La elección final se hace por benchmark empírico en el Nano contra threshold ≥10 FPS sostenidos con servos+I2C concurrentes.
+| | Training (Vast.ai) | Runtime (Jetson Nano JP 4.6.1) |
+|---|---|---|
+| Hardware | RTX 4090 (24 GB) | Maxwell `sm_53`, 128 CUDA cores, 4 GB unified |
+| Container/OS | `vastai/base-image:cuda-12.4.1-cudnn-devel-ubuntu22.04-py310` | Ubuntu 18.04 (L4T R32.7.1) |
+| Python | 3.10 | 3.6.9 |
+| Gestor paquetes | **uv** (`/opt/venv/trackb`) | apt + pip (sistema) |
+| Framework | PyTorch 2.x + Ultralytics 8.4.x | TensorRT 8.2.1.8 runtime |
+| Quantización | FP32 (training) | **FP16** (engine en Nano vía `trtexec --fp16`) |
+| NMS | desacoplado (`nms=False` en ONNX) | tri-path: V0 `cv2.dnn.NMSBoxes` CPU (default), V1 `EfficientNMS_TRT`, V2 `BatchedNMSDynamic_TRT` |
+| Persistencia | HuggingFace Hub vía `CommitScheduler` cada 10 min | scp manual desde Vast.ai |
+
+Decisiones completas y razones: [`investigaciones/HANDOFF-track-b-2026-05-13.md`](investigaciones/HANDOFF-track-b-2026-05-13.md) (registro maestro de decisiones D2-D30).
 
 ---
 
-## 2. Estado actual
+## 2. Estado actual (2026-05-14)
 
 | Componente | Estado | Notas |
-|------------|--------|-------|
-| Dataset combinado (Kaggle + Roboflow Universe) subido a Roboflow `embebidos3/waste-3class-lwld8` | ✅ Hecho | 11.558 imágenes / 13.873 bbox tras dedup phash + filtro 3 clases |
-| 4 investigaciones documentadas en `investigaciones/` | ✅ Hecho | 95+ fuentes, ronda 2 con filtro hardware Jetson Nano-class |
-| Spec Generate Version 1 (Roboflow UI) | ✅ Documentado | Ver `scripts/03_generate_roboflow_v1.md` |
-| Generate Version 1-A (320×320 tfrecord) y 1-B (416×416 yolov8) en Roboflow UI | ✅ Hecho | Generadas en Roboflow UI 2026-05-11 |
-| Notebooks Track A (Colab) y Track B (Kaggle) | ✅ Listos | `notebooks/train_track_a_ssd.py`, `notebooks/train_track_b_yolov8.py` |
-| Bench harness en Nano | ✅ Esqueleto | `scripts/bench_jetson.py` |
-| Pipeline runtime (captura+infer+I2C 3 hilos) | ⏳ Pendiente | Spec en `investigaciones/2026-05-05-arquitectura-software-jetson-nano.md` |
+|---|---|---|
+| Dataset Roboflow `embebidos3/waste-3class-lwld8` v1-B (`yolov8`, Fit-black 416×416, 3 clases) | Hecho | 17 910 train / 1 739 valid / 844 test, validado en dry-run local. |
+| Investigaciones consolidadas | Hecho | HANDOFF + ronda 2026-05-14 (uv-en-notebook, NMS Maxwell, headless training). |
+| `bootstrap.sh` Track B v1 | Hecho | Idempotente: apt + uv + venv `/opt/venv/trackb` + kernel `trackb` + cron watchdog auto-destroy + JupyterLab en tmux. Aún sin validar en Vast.ai. |
+| Notebook training Track B | Hecho | 29 celdas, headless vía `nbconvert + tmux`, `CommitScheduler` cada 10 min con signal handlers, heartbeat TRAINCHECK-style, ONNX opset=11 + Gates 3/4, auto-destroy Vast.ai. Dry-run parcial (§1-9) ejecutado OK 2026-05-14. |
+| Engine TRT FP16 en Nano | Validado empíricamente | ~40 FPS / 25 ms confirmado vía SSH 2026-05-13 con un `.engine` previo. Repetir con el `best.onnx` fine-tuned del primer entrenamiento Vast.ai. |
+| Sprint 1 phase C — provisioning Vast.ai end-to-end | Pendiente | Subir bootstrap.sh + notebook, ejecutar nbconvert en tmux, producir `best.onnx` fine-tuned. |
+| Pipeline runtime (captura + infer + I²C 3 hilos) | Pendiente | Spec en investigaciones; implementación post-engine. |
 
 ---
 
@@ -45,189 +53,136 @@ Resultado documentado de literatura comparable (Nature Sci Rep oct 2024, DOI 10.
 
 ```
 embebidos-3/
-├── README.md                    ← este archivo
-├── pyproject.toml               ← uv project (Python ≥3.10, deps host: roboflow, kaggle, imagehash, pillow, pyyaml)
-├── main.py                      ← stub
+├── README.md                                          ← este archivo
+├── CLAUDE.md                                          ← memo de contexto para Claude (acceso SSH al Nano)
+├── pyproject.toml                                     ← uv project (Python ≥3.10, host deps)
+├── uv.lock
+├── .gitattributes                                     ← LF para .sh / .py / .ipynb / .yml / .md
+├── main.py                                            ← stub
 │
-├── investigaciones/             ← 4 .md con 95+ fuentes citadas (input para informe IEEE)
-│   ├── 2026-05-05-arquitectura-software-jetson-nano.md
-│   ├── 2026-05-05-datasets-deteccion-residuos.md
-│   ├── 2026-05-05-dual-track-yolov8-vs-ssd.md
-│   └── 2026-05-05-preprocessing-roboflow.md
+├── investigaciones/                                   ← input directo para el informe IEEE
+│   ├── HANDOFF-track-b-2026-05-13.md                  ← registro maestro de decisiones D2-D30
+│   └── 2026-05-14-training-headless-uv-nms-maxwell.md ← ronda /investiga: uv-en-notebook, NMS Maxwell, headless
 │
-├── prototipos/                  ← (vacío, reservado para experimentación local)
+├── notebooks/
+│   └── train_track_b_yolov8.ipynb                     ← 29 celdas, kernel `trackb`, headless Vast.ai
 │
-├── scripts/                     ← utilidades host + playbooks
-│   ├── 03_generate_roboflow_v1.md   ← playbook copy-paste para Roboflow UI
-│   └── bench_jetson.py              ← harness FPS/latencia/RAM en Nano
-│
-├── notebooks/                   ← entrenamiento en cloud (formato celular # %%)
-│   ├── train_track_a_ssd.py         ← Colab T4: TF OD API + QAT → TFLite INT8
-│   └── train_track_b_yolov8.py      ← Kaggle T4: Ultralytics → ONNX opset 11 → (TRT FP16 en Nano)
-│
-└── uv.lock
+└── scripts/
+    └── bootstrap.sh                                   ← provisiona host Vast.ai (idempotente)
 ```
 
 ---
 
 ## 4. Investigaciones (input directo para el informe IEEE)
 
-Las 4 investigaciones combinadas constituyen el sustento bibliográfico del proyecto. Cada una tiene historial de rondas y tabla acumulativa de fuentes.
-
 | Documento | Foco | Decisiones que ancla |
-|-----------|------|----------------------|
-| [`arquitectura-software-jetson-nano.md`](2026-05-05-arquitectura-software-jetson-nano.md) | Stack JetPack 4.6.x, concurrencia 3 hilos, GIL libre en `Interpreter.invoke()`, regla del medio núcleo (Chakraborty 2025) | Patrón producer-consumer + queue drop-oldest; servos en hilo daemon aislado |
-| [`datasets-deteccion-residuos.md`](2026-05-05-datasets-deteccion-residuos.md) | 12 datasets evaluados, auto-labeling Grounded-SAM2, domain adaptation industrial | Combinación Kaggle arshnoor7389 + Roboflow Universe + capturas propias |
-| [`dual-track-yolov8-vs-ssd.md`](2026-05-05-dual-track-yolov8-vs-ssd.md) | Comparativa SSD-INT8 vs YOLOv8n-FP16, EfficientNMS_TRT roto en Maxwell (NVIDIA/TensorRT#1538), Roboflow multi-format | Reframing dual-track; NMS en CPU NumPy puro |
-| [`preprocessing-roboflow.md`](2026-05-05-preprocessing-roboflow.md) | Resize Fit-black vs Stretch (zxq309 -4-5 pp), Crasto 2024 mosaic+mixup +11,3 pp, Yun&Wong QAT, repr dataset 400 muestras | Spec Generate Version 1-A / 1-B; NO Cutout, NO class weights |
+|---|---|---|
+| [`HANDOFF-track-b-2026-05-13.md`](investigaciones/HANDOFF-track-b-2026-05-13.md) | Ledger maestro D2-D30: stack training (Ultralytics 8.4.x, uv, Vast.ai), pipeline ONNX opset 11, runtime Nano JP 4.6.1, NMS tri-path V0/V1/V2, persistencia HF Hub, auto-destroy. | Todo Track B. |
+| [`2026-05-14-training-headless-uv-nms-maxwell.md`](investigaciones/2026-05-14-training-headless-uv-nms-maxwell.md) | uv-en-notebook bajo `nbconvert`, `EfficientNMS_TRT` confirmado en binary JP 4.6.1 (fix #1538), `CommitScheduler` + heartbeat patrón TRAINCHECK, headless via `nbconvert + tmux`. | 8 decisiones aplicadas al notebook (uv invocation, NMS tri-path, signal handlers, manifest). |
+
+La carpeta `investigaciones/` reemplaza al CONSOLIDADO previo (su contenido fusionado quedó en el HANDOFF como sección histórica).
 
 ---
 
-## 5. Spec Roboflow Generate Version 1
+## 5. Quick start
 
-Estrategia: **dos versiones separadas con preprocessing común**, una por target de inferencia.
-
-### 5.1 Preprocessing común (ambas versiones)
-
-| Paso | Configuración | Razón |
-|------|---------------|-------|
-| Auto-Orient | **ON** | Roboflow Docs verbatim: *"recommends defaulting to leaving this on"*. Safe en producción (frames OpenCV sin EXIF). |
-| Modify Classes | Eliminar `cardboard`, `metal`, `miscellaneous`, `organic` (mantener `paper`, `glass`, `plastic`) | Reducir a 3 clases del MVP. |
-| Filter Null | **ON (explícito)** | Sin esto, ~1.119 imgs vacías post-Modify Classes (9,7%) actuarían como background negatives ruidosos. |
-| Resize | **Fit (black edges) in** | Equivalente a `LetterBox` Ultralytics. Evita train/inference mismatch (zxq309 issue YOLOv5#7454: -4-5 pp con stretch + letterbox interno). |
-
-### 5.2 Augmentations (ambas versiones, multiplicador 3x)
-
-Bbox-aware solamente. **NO Cutout** (image-level, puede borrar el único objeto-paper en una imagen — clase minoritaria con 1.384 bbox). **NO Mosaic** (Roboflow Docs verbatim: *"do not recommend using this with Roboflow 3.0 or YOLOv8"* — doble-mosaic destructivo; Ultralytics ya lo aplica online).
-
-| Augmentation | Rango | Justificación |
-|--------------|-------|---------------|
-| Flip Horizontal | ON | Banda simétrica izq↔der. |
-| Flip Vertical | OFF | Gravedad: residuos sobre banda nunca aparecen invertidos. |
-| Rotation | ±15° | Tolerancia montaje cámara diagonal. |
-| Shear | ±2° H/V | Microvibración banda. |
-| Brightness | ±25% | Variación luz ambiente día/tarde. |
-| Exposure | ±15% | Cambios apertura/iluminación. |
-| Saturation | ±20% | Tolerancia al sensor UVC barato. |
-| Blur | hasta 1,5 px | Movimiento sutil banda. |
-| Noise | hasta 5% pixeles | Sensor low-light. |
-
-### 5.3 Split y dos versiones generadas
-
-- **Split común:** 70% train / 20% valid / 10% test, estratificado por clase (ya configurado en Roboflow).
-- **Version 1-A** (Track A SSD): Resize Fit-black **320×320**, export `tfrecord`.
-- **Version 1-B** (Track B YOLOv8): Resize Fit-black **416×416**, export `yolov8`.
-
-Playbook completo paso-a-paso con citas verbatim de Roboflow Docs y código de validación gotcha clases fantasma: [`scripts/03_generate_roboflow_v1.md`](scripts/03_generate_roboflow_v1.md).
-
----
-
-## 6. Quick start
-
-### 6.1 Setup local (host x86, Windows/Linux)
+### 5.1 Local (host x86, Windows/Linux) — dry-run y desarrollo
 
 ```powershell
-# Python 3.10+ con uv (gestor por defecto del proyecto)
-uv sync
-$env:ROBOFLOW_API_KEY = "<tu_api_key>"
-$env:KAGGLE_USERNAME = "<tu_user>"   # opcional, si re-descargas el dataset original
-$env:KAGGLE_KEY = "<tu_key>"
+# Python 3.10+ con uv (gestor por defecto)
+uv sync                          # instala deps de pyproject.toml
+# Variables de entorno requeridas:
+#   HF_TOKEN              → HuggingFace, repo mitgar14/embebidos-3-models
+#   ROBOFLOW_API_KEY      → workspace embebidos3
+# Conviene tenerlas en .env (gitignored).
 ```
 
-### 6.2 Generate Version 1 en Roboflow (acción manual)
+Sin GPU NVIDIA local, el notebook aborta intencionalmente en la celda 8 (assert CUDA). El flow §1-9 (env, config, stack, pre-flight, Roboflow cascada, validación, scheduler init, heartbeat init) se valida en local en ~2 min sin tocar Vast.ai ni HF Hub.
 
-Seguir paso a paso `scripts/03_generate_roboflow_v1.md`. Tiempo estimado: 20-30 min UI + 10-15 min de procesamiento Roboflow para cada versión.
-
-### 6.3 Track A — entrenar SSD MobileNet v2 → TFLite INT8
-
-Plataforma: **Google Colab T4** (Python 3.10, GPU). Tiempo: ~2-3 h para 12.000 steps.
+### 5.2 Training en Vast.ai (Sprint 1 phase C)
 
 ```bash
-# En Colab/local con GPU:
-python notebooks/train_track_a_ssd.py
-# → genera ./detect_int8.tflite (~3 MB) listo para Jetson Nano
+# 1. Provisionar instancia (template cuda-12.4.1-cudnn-devel-ubuntu22.04-py310, RTX 4090, 50 GB disk)
+vastai create instance <OFFER_ID> --image vastai/base-image:cuda-12.4.1-cudnn-devel-ubuntu22.04-py310 ...
+
+# 2. Subir scripts + notebook
+rsync -avz scripts/bootstrap.sh notebooks/train_track_b_yolov8.ipynb root@<INSTANCE_IP>:/workspace/
+
+# 3. En la instancia: ejecutar bootstrap + lanzar training en tmux
+ssh root@<INSTANCE_IP>
+bash /workspace/bootstrap.sh
+tmux new -s training
+export HF_TOKEN=... ROBOFLOW_API_KEY=...
+jupyter nbconvert --execute --inplace \
+    --ExecutePreprocessor.kernel_name=trackb \
+    /workspace/train_track_b_yolov8.ipynb
+# Ctrl+B D para desconectar tmux; la sesión sobrevive SSH dropout.
 ```
 
-Decisiones críticas hard-coded:
-- QAT `delay=2000` **OBLIGATORIO** (Yun&Wong CVPR 2021: MobileNet-V1 sin QAT cae 71% → 3% accuracy en QUINT8).
-- Repr dataset 400 muestras del val split, shuffle seed=42.
-- `inference_input_type=tf.uint8` (no float).
+Outputs producidos por el notebook (subidos a HF Hub cada 10 min via `CommitScheduler`):
+- `runs/detect/train/weights/best.pt`
+- `exports/best.onnx` (opset 11, `nms=False`)
+- `manifests/{eval_summary,gate3_onnx,gate4_polygraphy,manifest}.json`
+- `runs/heartbeat.jsonl`
 
-### 6.4 Track B — entrenar YOLOv8n → ONNX
+La instancia Vast.ai se auto-destruye al final del notebook (cell 28) o por idle del cron watchdog (GPU <5% durante 30 min).
 
-Plataforma: **Kaggle T4** o Colab T4. Tiempo: ~1-2 h para 100 epochs.
-
-```bash
-python notebooks/train_track_b_yolov8.py
-# → genera yolov8n_waste.onnx (opset 11)
-```
-
-Decisiones críticas hard-coded:
-- `imgsz=416` (Nature 2024 Tabla 4: +25% FPS vs 640 en Nano).
-- `mosaic=1.0, close_mosaic=10, mixup=0.15, fliplr=0.5` (Crasto 2024 +11,3 pp mAP50).
-- `opset=11` (TRT 8.0/8.2 del JetPack no lee opset > 13).
-- Versión Ultralytics `>=8.4.31` (PR #24028 fix INT8 calibration imgsz no-cuadrado).
-
-### 6.5 Compilar TensorRT engine en el Nano (Track B)
+### 5.3 Compilar engine TensorRT FP16 en el Nano
 
 ```bash
+# scp del best.onnx al Nano
+scp mitgar14/embebidos-3-models/exports/best.onnx jetson@nano:/home/jetson/models/
+
 # En el Jetson Nano:
-sudo systemctl stop lightdm                              # liberar RAM de X11
+sudo systemctl stop lightdm                              # libera RAM de X11
 sudo sh -c "sync && echo 3 > /proc/sys/vm/drop_caches"
 export PATH=$PATH:/usr/src/tensorrt/bin
-trtexec --onnx=/home/jetson/models/yolov8n_waste.onnx \
+trtexec --onnx=/home/jetson/models/best.onnx \
         --saveEngine=/home/jetson/models/yolov8n_waste_fp16.engine \
         --fp16 --workspace=1024 --verbose
 ```
 
-`--workspace=1024` (1 GiB) seguro: ultralytics issue #14751 reporta `Killed` por OOM con workspace mayor en Nano 4 GB. Tiempo: 15-45 min.
+`--workspace=1024` (1 GiB) seguro: ultralytics issue #14751 reporta `Killed` por OOM con workspace mayor en Nano 4 GB. Tiempo de compilación: 15-45 min.
 
-### 6.6 Bench en el Nano
+### 5.4 NMS tri-path en el Nano
 
-```bash
-python scripts/bench_jetson.py --backend tflite_int8 --model detect_int8.tflite --imgsz 320
-python scripts/bench_jetson.py --backend trt_fp16    --model yolov8n_waste_fp16.engine --imgsz 416
-```
-
-Threshold de viabilidad MVP: **≥10 FPS sostenidos** con servos+I2C corriendo concurrentemente.
-
----
-
-## 7. Aportes para el informe IEEE
-
-Los 3 ejes de novedad detectados en la búsqueda bibliográfica de la ronda 2 (sin repo público que combine los tres):
-
-1. **QAT 320×320 + Jetson Nano deployment** — gap confirmado (Track A2 verbatim).
-2. **Comparativa SSD-INT8 CPU vs YOLOv8n-FP16 GPU sobre Nano B01 con dataset waste 3-clase** — ningún paper publicado lo hace head-to-head.
-3. **Ablación letterbox-vs-stretch en waste detection con aspect ratios mixtos** — brecha documentada en `preprocessing-roboflow.md` sec 8. Opcional: generar Version 1-B-alt-stretch (ver `scripts/03_generate_roboflow_v1.md` paso 8) y comparar mAP@50 contra 1-B canónica.
-
-Otras 2 ablaciones IEEE-grade identificadas:
-
-4. **imgsz 416 vs 640 en Track B** — Nature 2024 lo midió pero no en dataset custom waste.
-5. **Class weights ON vs OFF (Track A)** — Crasto 2024 lo midió en YOLOv5 single-stage pero no en SSD MobileNet v2 FPNLite con desbalance moderado 5,15× foreground-foreground.
+| Variante | Cuándo usarla | Cómo |
+|---|---|---|
+| **V0** (default) | Compatibilidad garantizada, sin riesgo. | Decodificar la salida del engine + `cv2.dnn.NMSBoxes` en CPU. Overhead 3-5 ms/frame. |
+| **V1** (smoke test) | Validar si `EfficientNMS_TRT` funciona en este Nano específico. | Re-export ONNX con `nms=True, format=onnx` (Ultralytics inyecta nodo `EfficientNMS_TRT`), recompilar engine. El plugin está presente en el binary JP 4.6.1 con el fix del issue #1538 (commit `3235cc2`, jul-2021). |
+| **V2** (fallback) | Si V1 falla. | `BatchedNMSDynamic_TRT` — plugin estable del mismo binary. |
 
 ---
 
-## 8. Gotchas conocidos (de la investigación, no perderlos)
+## 6. Aportes para el informe IEEE
 
-- **EfficientNMS_TRT plugin roto en Maxwell** (TRT 8.0.1, NVIDIA/TensorRT#1538). Solución: NMS en CPU NumPy puro, overhead 1-3 ms.
-- **`tflite.Interpreter` NO es thread-safe** para llamadas concurrentes con un único objeto. MVP: 1 instancia, 1 hilo de inferencia.
-- **`num_threads > 1` con XNNPACK** puede degradar en TFLite Python 3.6 antiguo (TF #52076, #53146). Validar empíricamente.
-- **Padding=114 (Ultralytics) vs Fit-black=0 (Roboflow)** — mismatch teórico no medido en literatura. Mitigación documentada en `preprocessing-roboflow.md` sec 1.
-- **Roboflow Versions son inmutables y consumen créditos** — no regenerar Version 1-A/1-B sin necesidad.
-- **Roboflow `roboflow-python` issue #88: clases fantasma** post-Modify Classes — código de validación incluido en el playbook (`scripts/03_generate_roboflow_v1.md` paso 6).
+1. **YOLOv8n FP16 416×416 a 40 FPS en Nano B01 JP 4.6.1, superando la predicción de Nature 2024 Tabla 4 (30 FPS).** Resultado empírico reproducible.
+2. **Validación empírica del fix `EfficientNMS_TRT` en el binary JP 4.6.1** (issue NVIDIA/TensorRT#1538, commit `3235cc2` jul-2021). La literatura dual-track previa asume el plugin roto en Maxwell — confirmamos lo contrario y dejamos los tres paths (V0/V1/V2) documentados.
+3. **Comparativa imgsz 416 vs 640 en dataset waste custom.** Nature 2024 lo midió en COCO; nosotros sobre 20 493 imágenes propias con 3 clases desbalanceadas.
+4. **Pipeline headless de training reproducible sobre cloud spot (Vast.ai)** con `CommitScheduler` + signal handlers + heartbeat TRAINCHECK-style + auto-destroy. Patrón replicable para otros proyectos académicos con presupuesto limitado.
+5. **Ablación letterbox-vs-stretch en waste detection con aspect ratios mixtos.** Brecha documentada — opcional: generar Version 1-B-alt-stretch en Roboflow y comparar mAP@50.
 
 ---
 
-## 9. Referencias citables principales
+## 7. Gotchas conocidos
+
+- **`EfficientNMS_TRT` en Maxwell**: el issue NVIDIA/TensorRT#1538 está fixed en TRT 8.2.1.8 (commit `3235cc2`, jul-2021), incluido en JP 4.6.1. V0 (CPU NumPy) es default por compatibilidad; V1 y V2 quedan disponibles.
+- **Roboflow SDK `location` bug** (verificado en ≥1.3.x): el argumento `location=` falla intermitentemente. Notebook implementa cascada de 3 estrategias (`location` directo → `download()` + `shutil.move` → 3 retries con backoff). NO setear env var `DATASET_DIRECTORY`.
+- **`numpy<2.0` obligatorio**: ultralytics + onnx no funcionan con NumPy 2.x en este entorno. Notebook hace hard assert en cell 8.
+- **`KillUserProcesses=no` en Vast.ai**: sin esta línea en `/etc/systemd/logind.conf`, `tmux` muere al cerrar la sesión SSH. `bootstrap.sh` la configura.
+- **Padding=114 (Ultralytics LetterBox) vs Fit-black=0 (Roboflow)**: mismatch teórico no medido en literatura. Decisión documentada en HANDOFF §6.
+- **Roboflow Versions inmutables y consumen créditos**: no regenerar Version 1-B sin necesidad.
+- **Tailscale ARM64 + kernel 4.9-tegra**: bug DNS #14902. Workaround `--accept-dns=false --ssh` (HANDOFF D27).
+
+---
+
+## 8. Referencias citables principales
 
 - Crasto, K. (2024). *Class Imbalance in Object Detection: An Experimental Diagnosis and Study of Mitigation Strategies*. arXiv:2403.07113.
-- Yun, S. & Wong, A. (2021). *Do all MobileNets quantize poorly? Gaining insights into the effect of quantization on depthwise separable convolutional networks through the eyes of multi-scale distributional dynamics*. CVPR 2021. arXiv:2104.11849.
-- Jacob, B. et al. (2018). *Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only Inference*. CVPR 2018.
-- Bashkirova, D. et al. (2022). *ZeroWaste Dataset: Towards Deformable Object Segmentation in Cluttered Scenes*. CVPR 2022.
 - Bochkovskiy, A. et al. (2020). *YOLOv4: Optimal Speed and Accuracy of Object Detection*. arXiv:2004.10934.
-- Zhong, Z. et al. (2020). *Random Erasing Data Augmentation*. AAAI 2020.
 - Chakraborty et al. (2025). *Half-core utilization rule on Jetson edge devices*. arXiv:2508.08430.
 - Nature Scientific Reports (oct 2024). *Real-time waste detection on Jetson Nano* (DOI: 10.1038/s41598-024-74798-3).
+- Yan, P. et al. (2025). *TRAINCHECK: practical training-time invariant checking for ML pipelines*. arXiv:2506.14813.
+- Wang, A. et al. (2024). *YOLOv10: Real-Time End-to-End Object Detection*. arXiv:2405.14458.
 
-Lista completa con 95+ entradas en las tablas acumulativas de las 4 investigaciones.
+Bibliografía completa con +30 fuentes adicionales en las tablas acumulativas del HANDOFF y de `2026-05-14-training-headless-uv-nms-maxwell.md`.
