@@ -41,7 +41,7 @@ Construir un clasificador de residuos para banda transportadora industrial, embe
 
 El proyecto se desarrolla en el marco de un curso de Sistemas Embebidos en una universidad colombiana, con entrega esperada como informe IEEE-style + demo física.
 
-### 1.2 Hardware actual (verificado en SSH 2026-05-13)
+### 1.2 Hardware actual (verificado en SSH 2026-05-13; re-verificado 2026-05-14)
 
 | Componente | Especificación verificada |
 |---|---|
@@ -50,7 +50,7 @@ El proyecto se desarrolla en el marco de un curso de Sistemas Embebidos en una u
 | RAM | 4 GB LPDDR4 unificada CPU/GPU |
 | Almacenamiento | microSD (capacidad por confirmar empíricamente) |
 | OS | Ubuntu 18.04 bionic, kernel `4.9.337-tegra`, aarch64 |
-| Userspace ML | JetPack **4.6.5** — CUDA 10.2, cuDNN 8.2.1, TensorRT **8.2.1.8**, Python **3.6.9**, OpenCV 4.1.1 |
+| Userspace ML | JetPack **4.6.1** (L4T R32.7.1) — CUDA 10.2.300, cuDNN 8.2.1, TensorRT **8.2.1.8**, Python **3.6.9**, OpenCV 4.1.1 |
 | Cámara | Logitech **C920 OG** Rev 1 (PID `046d:082d`) — todavía **no conectada físicamente** a la Nano |
 | Servos / actuadores | PCA9685 vía I²C (bus por verificar empíricamente: probable `/dev/i2c-1`) |
 | Cooling | `pwm-fan` accesible, actualmente con `target_pwm=0` (apagado) |
@@ -160,7 +160,7 @@ Convenciones repetidas para conveniencia de lectura:
 1. **YOLOv8n es la única variante con menos de 3 M parámetros y latencia aceptable en Maxwell.** Las variantes `s` (9 M) y `m` (25 M) saturan la memoria unificada o no llegan a 10 FPS.
 2. **416×416 es óptimo por evidencia cuantitativa redundante.** Nature 2024 Tabla 4: YOLOv8n FP16 TRT en Nano → 416 = 30 FPS, 512 = 29 FPS, 640 = 24 FPS. Espstack 2023: YOLOv7-tiny → 416 = 17 FPS, 640 = 9 FPS (1.9× de ganancia bajando de 640 a 416). Alqahtani 2024 confirma que reducciones agresivas (640 → 320) cuestan ~28 puntos de mAP — el sweet spot está exactamente en 416.
 3. **ONNX opset 11 es el máximo soportado por TensorRT 8.2.** Opset 12+ falla con `UNSUPPORTED_NODE` para nodos `Slice` y `Resize` que YOLOv8 usa internamente. La documentación oficial NVIDIA confirma: TRT 8.2 soporta operadores hasta opset 13, pero las features reales se quedan en opset 11.
-4. **`nms=False` es obligatorio.** El plugin `EfficientNMS_TRT` está roto en Maxwell con TRT 8.x (issue NVIDIA/TensorRT#1538). La alternativa es decodificar y aplicar NMS en CPU con `cv2.dnn.NMSBoxes`.
+4. **`nms=False` es obligatorio en el `.onnx`.** El NMS se hace fuera del grafo en el Nano. Estrategia tri-path (corrección 2026-05-14 vía SSH): **V0 default** — `cv2.dnn.NMSBoxes` CPU NumPy post-proc, compatibilidad garantizada. **V1 smoke test** — `EfficientNMS_TRT` plugin: el binary de TRT 8.2.1.8 del JP 4.6.1 lo incluye con el fix del issue NVIDIA/TensorRT#1538 (commit `3235cc2`, julio 2021); queda como path a validar empíricamente, no descartado. **V2 fallback** — `BatchedNMSDynamic_TRT`, plugin estable del mismo binary.
 5. **`dynamic=False` y `simplify=True` son obligatorios.** `dynamic=True` requiere optimization profile (overhead innecesario para una resolución fija). `simplify=False` deja nodos `Slice` con shape dinámica que TRT 8.2 rechaza.
 
 **Implicaciones:**
@@ -430,6 +430,8 @@ Con el enfoque exclusivo a Track B, el venv `/opt/venv/tracka` ya no es necesari
 
 **Referencias clave:** Roboflow Python SDK (`github.com/roboflow/roboflow-python`).
 
+**Verificación 2026-05-14 (ronda /investiga + lectura source):** el bug del argumento `location` en `version.download(...)` **persiste en releases ≥1.3.x** (verificado leyendo `version.py` y `dataset.py` de la rama main; release 1.3.9 del 2026-05-07 no incluye fix). Mitigación: el notebook implementa una cascada de 3 estrategias (`location` directo → `download()` sin location + `shutil.move` → 3 retries con backoff exponencial), y NO se setea la env var `DATASET_DIRECTORY` (entra en conflicto con `location` y deja ambas ubicaciones vacías). Esta cascada vive en el notebook, no en el SDK; el SDK sigue siendo la dependencia oficial pero su contrato no se asume confiable para `location`.
+
 ---
 
 ### D27 — Tailscale `--accept-dns=false --ssh` como workaround del bug DNS ARM64 #14902
@@ -571,7 +573,7 @@ Resultados (Nano TRT 8.2.1, sm_53, FP16):
 - D2H latency: mean = 0.12 ms.
 - Engine file size: **14.9 MB**.
 
-**Conclusión crítica:** YOLOv8n FP16 416×416 en este hardware específico (Jetson Nano B01 con JetPack 4.6.5, post-`apt-upgrade`) corre a **~40 FPS** end-to-end, **superando la predicción de Nature 2024 Tabla 4 (30 FPS)**. El margen sobre el target del proyecto (≥10 FPS sostenido) es **4× mayor**, dejando holgura cómoda para concurrencia con el control de servos PCA9685.
+**Conclusión crítica:** YOLOv8n FP16 416×416 en este hardware específico (Jetson Nano B01 con JetPack 4.6.1, L4T R32.7.1) corre a **~40 FPS** end-to-end, **superando la predicción de Nature 2024 Tabla 4 (30 FPS)**. El margen sobre el target del proyecto (≥10 FPS sostenido) es **4× mayor**, dejando holgura cómoda para concurrencia con el control de servos PCA9685.
 
 ### 3.6 Limpieza post-validación
 
@@ -618,7 +620,7 @@ Después de las 3 demos, los archivos en `/tmp/` fueron limpiados explícitament
 | Validación pre-deploy | Gate 3 (ONNX ops blacklist) + Gate 4 (Polygraphy NGC 21.11) | Detecta >95% de errores antes de los 8 min de build en Nano | D13 |
 | Compilación engine | trtexec en la Nano con `--fp16 --workspace=1024` | Engines son GPU-arch + TRT-version específicos | D13, D14 |
 | Quantización engine | FP16-only | Maxwell sin `dp4a`: INT8 NO acelera pero SÍ degrada mAP | D14 |
-| Postproc Nano | NMS CPU NumPy con `cv2.dnn.NMSBoxes` | `EfficientNMS_TRT` roto en Maxwell + Polygraphy no funciona en JP 4.6.1 | D13, D14 |
+| Postproc Nano | NMS tri-path: V0 `cv2.dnn.NMSBoxes` CPU (default), V1 `EfficientNMS_TRT` (smoke test), V2 `BatchedNMSDynamic_TRT` (fallback) | V1 y V2 sí están en el binary JP 4.6.1 (fix #1538 commit `3235cc2`, jul-2021); Polygraphy no corre en JP 4.6.1 | D13, D14 |
 | Inferencia runtime Nano | TensorRT Python bindings + cuda-python 11.0 | ORT + TRT EP requiere CUDA 11.4 (Nano tiene 10.2) | (implícito) |
 | Acceso remoto Nano | Tailscale `--accept-dns=false --ssh` | Bug DNS ARM64 + WireGuard kernel module broken en k4.9-tegra | D27, D30 |
 | Captura cámara | OpenCV `VideoCapture` con pipeline GStreamer `v4l2src` + MJPG decode | Cámara C920 OG, MJPG mandatorio para evitar saturación USB 2.0 | (heredada de investigación 2026-05-10) |
@@ -770,7 +772,7 @@ Esta sección describe **el flujo de datos** desde el origen (cámara o dataset 
 
 **Diferencia:** +33% sobre la predicción. Posibles causas:
 1. La Nature 2024 puede estar reportando con un YOLOv8n fine-tuned (mas custom layers que el COCO baseline).
-2. La Nature 2024 puede usar JetPack 4.6.1 (no 4.6.5) — la versión 4.6.5 trae mejoras en TRT runtime.
+2. Nature 2024 usa JetPack 4.6.1 — coincide con nuestra Nano (verificado vía SSH 2026-05-14). No queda hipótesis pendiente sobre diferencia de versiones de JetPack como explicación del delta de FPS.
 3. La Nano de este proyecto tiene `MAX-N` power mode activo (10W); la Nature 2024 no especifica modo.
 4. La medición de Nature 2024 puede incluir overhead de preprocessing + render que `trtexec --iterations=100` no incluye.
 
@@ -1252,11 +1254,11 @@ Margen Ablations 2-5: agregar ~3-5 h operador + ~3 USD cloud.
 - **Backend (en contexto de ML deploy):** infraestructura de cómputo que ejecuta la inferencia. Para Track B = "GPU Maxwell vía TensorRT". Para Track A (descartado) hubiera sido "CPU + XNNPACK + NEON SIMD vía TFLite".
 - **`dp4a`:** instrucción CUDA (introducida en sm_61 Pascal 2016) que realiza dot product de 4 INT8 acumulando a INT32 en un único ciclo. Es la base del speedup INT8 en GPUs NVIDIA. Ausente en Maxwell sm_53 (Tegra X1 / Jetson Nano).
 - **Engine TensorRT:** archivo binario `.engine` que contiene un grafo de inferencia compilado y optimizado para una GPU específica (compute capability) y una versión específica de TRT. NO portable entre GPUs ni versiones.
-- **EfficientNMS_TRT:** plugin TensorRT que aplica NMS dentro del grafo. Está **roto en Maxwell** con TRT 8.x (issue NVIDIA/TensorRT#1538). Por eso usamos NMS en CPU NumPy.
+- **EfficientNMS_TRT:** plugin TensorRT que aplica NMS dentro del grafo. Originalmente roto en Maxwell con TRT 8.0.x (issue NVIDIA/TensorRT#1538). **Fix incluido en TRT 8.2.1.8** que trae el JP 4.6.1 (commit `3235cc2`, julio 2021) — verificado leyendo el binary vía SSH 2026-05-14. Queda como path V1 (smoke test pendiente); V0 default sigue siendo NMS CPU NumPy por compatibilidad.
 - **`fixed_shape_resizer` / `keep_aspect_ratio_resizer`:** modos de resize del TF Object Detection API. Track A los hubiera usado; Track B no aplica (Ultralytics usa LetterBox interno).
 - **Fit-black (Roboflow):** modo de resize que preserva aspect ratio + agrega padding negro (valor 0) para hacer la imagen cuadrada. Equivalente conceptual al LetterBox de Ultralytics pero con padding 0 en lugar de 114.
 - **Gate (en contexto de validación pre-deploy):** chequeo binario `pass`/`fail` que un artefacto (ONNX, TFLite) debe pasar antes de copiarse a la Nano. Track B tiene Gate 3 (ops blacklist) y Gate 4 (Polygraphy NGC). Gates 1-2 (TFLite) son Track A, fuera de alcance.
-- **JetPack:** stack de software de NVIDIA para Jetson, incluye L4T (Linux for Tegra) + CUDA + cuDNN + TensorRT + librerías multimedia. Nuestra Nano corre JetPack 4.6.5.
+- **JetPack:** stack de software de NVIDIA para Jetson, incluye L4T (Linux for Tegra) + CUDA + cuDNN + TensorRT + librerías multimedia. Nuestra Nano corre JetPack 4.6.1 (L4T R32.7.1, verificado vía SSH 2026-05-14).
 - **LetterBox (Ultralytics):** transformación que resize preservando aspect ratio y agrega padding (default valor 114 = ImageNet mean RGB averaged) para hacer la imagen cuadrada. Default `auto=False` en `val` y `predict`, `True` (=Stretch) en `train`.
 - **`looker-remote-desktop`:** herramienta hecha por Nicolas Cuaran (`github.com/NicolasCuaran/looker-remote-desktop`) que combina x11vnc + Tailscale `--ssh` + GDM autologin para acceso remoto headless a la Nano. Ya operativa.
 - **Maxwell sm_53:** arquitectura de la GPU del Tegra X1 (Jetson Nano). 128 CUDA cores, sin Tensor Cores, sin `dp4a`. SOLO acelera FP32 y FP16 en hardware; INT8 cae a software (más lento).
@@ -1371,11 +1373,11 @@ Filtrado a Track B + acceso remoto Nano. Para el catálogo completo (~270 URLs),
 - NoMachine + Xfce4 + Jetson Nano video: https://youtu.be/vBMHS6FXBM4
 - Foro NVIDIA "WireGuard kernel module Jetson Nano" (#184764): https://forums.developer.nvidia.com/t/wireguard-kernel-module-jetson-nano/184764
 
-### 11.8 Hardware + L4T + JetPack 4.6.5
+### 11.8 Hardware + L4T + JetPack 4.6.1
 
 - Jetson Nano DevKit producto: https://developer.nvidia.com/embedded/jetson-nano-developer-kit
 - JetPack landing: https://developer.nvidia.com/embedded/jetpack
-- JetPack 4.6.5: https://developer.nvidia.com/jetpack-sdk-465
+- JetPack 4.6.1: https://developer.nvidia.com/jetpack-sdk-461
 - Linux for Tegra R32.7.6: https://developer.nvidia.com/embedded/linux-tegra-r3276
 - eLinux Jetson Nano wiki: https://elinux.org/Jetson_Nano
 - JetsonHacks blog: https://www.jetsonhacks.com/
