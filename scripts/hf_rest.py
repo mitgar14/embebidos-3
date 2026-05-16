@@ -31,3 +31,26 @@ def download(filename: str, local_path: Path, revision: str = "main",
         for chunk in r.iter_content(chunk_size=chunk_size):
             f.write(chunk)
     tmp.rename(local_path)
+
+
+def list_files(revision: str = "main", timeout: int = 30) -> List[Dict]:
+    """Lista siblings del repo en la revision dada."""
+    url = f"{BASE}/api/models/{REPO}"
+    r = requests.get(url, headers=_headers(),
+                     params={"revision": revision}, timeout=timeout)
+    r.raise_for_status()
+    return r.json().get("siblings", [])
+
+
+def repo_info(revision: str = "main", timeout: int = 30) -> Dict:
+    """Info de la revision: sha, lastModified, etc."""
+    url = f"{BASE}/api/models/{REPO}"
+    r = requests.get(url, headers=_headers(),
+                     params={"revision": revision}, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_head_revision(timeout: int = 30) -> str:
+    """SHA del último commit en main."""
+    return repo_info("main", timeout=timeout).get("sha", "")
