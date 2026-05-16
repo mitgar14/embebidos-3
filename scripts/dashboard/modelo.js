@@ -48,18 +48,35 @@
   }
 
   const TEMPLATES = {
-    no_model: (s) => `
-      <div class="hero-card">
-        <h2>Sin modelo cargado</h2>
-        <p>Descargá el último ONNX desde HF Hub y compilá el engine TRT optimizado para este Jetson Nano.</p>
-        <button id="btn-build" class="primary">descargar y compilar engine</button>
-        <p class="hint">Tarda entre 15 y 40 minutos. Podés cerrar la pestaña; el proceso sigue en el servidor.</p>
-      </div>`,
+    no_model: (s) => noModelTemplate(s),
     ready: (s) => readyTemplate(s),
     update_available: (s) => readyTemplate(s, { banner: true }),
     degraded: (s) => degradedTemplate(s),
     building: (s) => buildingTemplate(s),
   };
+
+  function noModelTemplate(s) {
+    const orphan = s.engine_binary_present === true;
+    const orphanBlock = orphan ? `
+      <div class="banner-warn" style="margin-top:16px">
+        <strong>Hay un engine TRT en el Nano sin tracking.</strong>
+        <p class="hint" style="margin:6px 0">
+          Encontramos <span class="mono">best_fp16.engine</span> en disco pero sin metadatos
+          (probablemente compilado antes del sistema de tracking). Podés <em>adoptarlo</em>
+          si confiás en que corresponde a la versión actual de HF Hub — el sistema le creará
+          un meta retroactivo apuntando a la HEAD actual.
+        </p>
+        <button id="btn-adopt" class="primary" title="Hashea el .engine local y lo asocia con la revision/ONNX SHA256 actual de HF Hub. NO recompila.">adoptar engine existente</button>
+      </div>` : '';
+    return `
+      <div class="hero-card">
+        <h2>Sin modelo cargado</h2>
+        <p>Descargá el último ONNX desde HF Hub y compilá el engine TRT optimizado para este Jetson Nano.</p>
+        <button id="btn-build" class="primary">descargar y compilar engine</button>
+        <p class="hint">Tarda entre 15 y 40 minutos. Podés cerrar la pestaña; el proceso sigue en el servidor.</p>
+        ${orphanBlock}
+      </div>`;
+  }
 
   function readyTemplate(s, opts = {}) {
     const m = s.active_engine || {};
@@ -68,10 +85,11 @@
         <strong>Nuevo entrenamiento disponible en HF Hub.</strong>
         <button id="btn-build" class="primary">actualizar engine</button>
       </div>` : '';
+    const adoptedBadge = m.adopted ? ` <span class="badge-adopted" title="Engine pre-existente cuyo origen fue inferido (no compilado por este sistema). Compilar de nuevo con 'recompilar engine' para tener tracking completo de duración y parámetros.">adoptado</span>` : '';
     return `
       ${banner}
       <div class="modelo-card">
-        <h2>Modelo activo</h2>
+        <h2>Modelo activo${adoptedBadge}</h2>
         <dl class="modelo-info">
           <dt>origen</dt><dd>commit <span class="mono">${(m.hf_revision || '').slice(0,7)}</span> · ${(m.hf_commit_date || '—')}</dd>
           <dt>onnx</dt><dd>sha <span class="mono">${(m.onnx_sha256 || '').slice(0,8)}</span></dd>
@@ -162,6 +180,28 @@
     if (rb && !rb.disabled) rb.onclick = () => rollback();
   }
 
+  async function adoptEngine() {
+    if (!confirm(
+      'Adoptar el engine existente como si correspondiera a la versión actual de HF Hub.\n\n' +
+      'Esto hashea el binario local y le asocia los metadatos de la HEAD de HF. NO recompila.\n\n' +
+      '¿Continuar?'
+    )) return;
+    try {
+      const r = await fetch(api('/model/adopt'), { method: 'POST' });
+      const data = await r.json();
+      if (r.status === 404) {
+        alert('No hay engine binario en el Nano. Usá "descargar y compilar engine".');
+      } else if (r.status === 409) {
+        alert('El engine ya tiene meta asociado. No es necesario adoptar.');
+      } else if (!r.ok) {
+        alert('No se pudo adoptar: ' + (data.detail?.error || r.status));
+      } else {
+        alert(`Engine adoptado.\n\nhf_revision: ${(data.meta.hf_revision || '').slice(0, 7)}\nonnx_sha256: ${(data.meta.onnx_sha256 || '').slice(0, 8)}`);
+      }
+      fetchState();
+    } catch (e) { alert(e.message); }
+  }
+
   async function rollback() {
     if (!confirm('¿Revertir al engine anterior?')) return;
     try {
@@ -177,6 +217,9 @@
   function wireActions(s) {
     const btnBuild = document.getElementById('btn-build');
     if (btnBuild) btnBuild.onclick = () => triggerBuild();
+
+    const btnAdopt = document.getElementById('btn-adopt');
+    if (btnAdopt) btnAdopt.onclick = () => adoptEngine();
 
     const btnCheck = document.getElementById('btn-check-updates');
     if (btnCheck) btnCheck.onclick = () => checkUpdates();

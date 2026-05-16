@@ -618,6 +618,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, .action:focus-v
 
 /* ============ MODELO — main content cards ============ */
 
+.badge-adopted {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: color-mix(in oklch, var(--warn) 25%, transparent);
+  border: 1px solid var(--warn);
+  color: var(--text);
+  border-radius: 999px;
+  vertical-align: middle;
+  cursor: help;
+}
 .hero-card, .modelo-card {
   background: var(--bg-elev-2);
   border: 1px solid var(--border);
