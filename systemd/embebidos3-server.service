@@ -1,0 +1,19 @@
+[Unit]
+Description=embebidos-3 FastAPI/WS inference server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jetson
+Group=jetson
+WorkingDirectory=/home/jetson/embebidos-3
+EnvironmentFile=/etc/embebidos3/secrets.env
+RuntimeDirectory=embebidos3
+RuntimeDirectoryMode=0755
+ExecStart=/home/jetson/embebidos-3/scripts/nano_start_server.sh
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
