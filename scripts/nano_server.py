@@ -408,8 +408,13 @@ async def ws_handler(ws: WebSocket):
     except Exception as e:
         try:
             await ws.send_text(json.dumps({"ok": False, "error": f"server: {e}"}))
+        except Exception:
+            pass  # cliente puede haber cerrado durante el envío
         finally:
-            await ws.close()
+            try:
+                await ws.close()
+            except Exception:
+                pass
 
 
 def _term(signum, frame):
