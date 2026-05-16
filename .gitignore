@@ -19,6 +19,7 @@ exports/
 
 # Obsidian (configuración local de la bóveda)
 .obsidian/
+.planning/
 
 # Playwright (configuración local de pruebas)
 .playwright/
