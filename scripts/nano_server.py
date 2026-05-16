@@ -366,6 +366,70 @@ def health():
     }
 
 
+def _read_engine_meta(meta_path):
+    if not meta_path.exists():
+        return None
+    try:
+        return json.loads(meta_path.read_text())
+    except Exception:
+        return None
+
+
+def _is_pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except PermissionError:
+        return True
+    except (ProcessLookupError, ValueError, OSError):
+        return False
+
+
+def _read_active_job():
+    if not JOB_STATE_FILE.exists():
+        return None
+    try:
+        state = json.loads(JOB_STATE_FILE.read_text())
+    except Exception:
+        return None
+    pid = state.get("pid")
+    if pid and _is_pid_alive(pid):
+        return state
+    return None  # huérfano, se considera no activo
+
+
+@app.get("/model/state")
+def model_state():
+    """Devuelve el estado del modelo: no_model | ready | building | degraded."""
+    active_meta = _read_engine_meta(ACTIVE_ENGINE_META)
+    previous_meta = _read_engine_meta(PREVIOUS_ENGINE_META)
+    active_job = _read_active_job()
+
+    if active_job:
+        return {
+            "state": "building",
+            "active_engine": active_meta,
+            "previous_engine": previous_meta,
+            "active_job": active_job,
+        }
+
+    if ACTIVE_ENGINE.exists() and active_meta:
+        degraded = bool(active_meta.get("from_fallback", False))
+        return {
+            "state": "degraded" if degraded else "ready",
+            "active_engine": active_meta,
+            "previous_engine": previous_meta,
+            "active_job": None,
+        }
+
+    return {
+        "state": "no_model",
+        "active_engine": None,
+        "previous_engine": previous_meta,
+        "active_job": None,
+    }
+
+
 @app.websocket("/ws")
 async def ws_handler(ws: WebSocket):
     await ws.accept()
