@@ -41,6 +41,7 @@ import numpy as np
 import pycuda.driver as cuda
 import tensorrt as trt
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -353,6 +354,13 @@ def read_ram_mb() -> dict:
 
 # ---------- FastAPI app -------------------------------------------------------
 app = FastAPI(title="embebidos-3 nano inference server")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 worker = TRTWorker(ENGINE_PATH)
 
 _recovered_job_at_startup = None
