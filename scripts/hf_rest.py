@@ -91,35 +91,99 @@ def get_file_lfs_sha256(filepath: str, revision: str = "main",
     return None
 
 
+INLINE_MAX_BYTES = 10 * 1024 * 1024  # HF fuerza LFS por encima de ~10 MB.
+
+
 def upload_file_inline(local_path: Path, remote_path: str,
                        commit_msg: str = "embebidos3 backup",
                        branch: str = "main", timeout: int = 300) -> Dict:
-    """Upload sin LFS, base64 inline. Apto para archivos < ~50 MB.
-    Si el server exige LFS (422), levanta RuntimeError con instrucción para fallback."""
+    """Upload sin LFS, base64 inline, vía endpoint commit NDJSON.
+
+    Apto solo para archivos pequeños (<10 MB). Por encima, HF responde
+    `uploadMode: lfs` en el preupload y rechaza el commit inline; este cliente
+    no implementa el flujo LFS (preupload + batch + S3 PUT + verify) — usar
+    backup local en disco para binarios grandes.
+
+    Shape verificado contra `_commit_api.py` de huggingface_hub y reimplementación
+    independiente HfHub.Commit (Elixir): NDJSON con `header` + `file`, una entrada
+    por línea, Content-Type `application/x-ndjson`.
+    """
     local_path = Path(local_path)
+    size = local_path.stat().st_size
+    if size > INLINE_MAX_BYTES:
+        raise RuntimeError(
+            "Archivo {} pesa {} bytes (>{} MB). HF lo forzaría a LFS y este "
+            "cliente solo soporta inline; usar backup local para binarios "
+            "grandes y subir solo el manifest a HF.".format(
+                remote_path, size, INLINE_MAX_BYTES // (1024 * 1024)
+            )
+        )
     content_b64 = base64.b64encode(local_path.read_bytes()).decode("ascii")
-    payload = {
-        "summary": commit_msg,
-        "files": [{
+    header_line = json.dumps({
+        "key": "header",
+        "value": {"summary": commit_msg, "description": ""},
+    })
+    file_line = json.dumps({
+        "key": "file",
+        "value": {
             "path": remote_path,
             "encoding": "base64",
             "content": content_b64,
-        }]
-    }
-    url = f"{BASE}/api/models/{REPO}/commit/{branch}"
+        },
+    })
+    body = (header_line + "\n" + file_line + "\n").encode("utf-8")
+    url = "{}/api/models/{}/commit/{}".format(BASE, REPO, branch)
     r = requests.post(
         url,
-        headers={**_headers(), "Content-Type": "application/json"},
-        data=json.dumps(payload),
+        headers={**_headers(), "Content-Type": "application/x-ndjson"},
+        data=body,
         timeout=timeout,
     )
     if r.status_code == 422 and "lfs" in r.text.lower():
-        raise RuntimeError(f"Servidor exige LFS para {remote_path}. "
-                           "Ver fallback con git-lfs en docs.")
+        raise RuntimeError(
+            "Servidor exige LFS para {}. Este cliente solo soporta inline; "
+            "subir solo manifests pequeños.".format(remote_path)
+        )
     if r.status_code in (401, 403):
         raise RuntimeError(
-            f"HF auth failed uploading to {remote_path} (status {r.status_code}). "
-            f"Check HF_TOKEN env var."
+            "HF auth failed uploading to {} (status {}). Check HF_TOKEN env var.".format(
+                remote_path, r.status_code
+            )
+        )
+    r.raise_for_status()
+    return r.json()
+
+
+def delete_file_inline(remote_path: str,
+                       commit_msg: str = "embebidos3 delete",
+                       branch: str = "main", timeout: int = 60) -> Dict:
+    """Borra un archivo del repo HF vía commit NDJSON con key=deletedFile.
+
+    Borrar el último archivo de un directorio elimina implícitamente el directorio
+    en el repo (Git no rastrea directorios vacíos). Para borrar carpetas enteras
+    con muchos archivos, usar la clave `deletedFolder` (no implementada aquí).
+    """
+    header_line = json.dumps({
+        "key": "header",
+        "value": {"summary": commit_msg, "description": ""},
+    })
+    delete_line = json.dumps({
+        "key": "deletedFile",
+        "value": {"path": remote_path},
+    })
+    body = (header_line + "\n" + delete_line + "\n").encode("utf-8")
+    url = "{}/api/models/{}/commit/{}".format(BASE, REPO, branch)
+    r = requests.post(
+        url,
+        headers={**_headers(), "Content-Type": "application/x-ndjson"},
+        data=body,
+        timeout=timeout,
+    )
+    if r.status_code in (401, 403):
+        raise RuntimeError(
+            "HF auth failed deleting {} (status {}). Check HF_TOKEN env var.".format(
+                remote_path, r.status_code
+            )
         )
     r.raise_for_status()
     return r.json()
@@ -142,16 +206,23 @@ if __name__ == "__main__":
     p_up.add_argument("remote_path", help="path en el repo")
     p_up.add_argument("--message", default="embebidos3 backup")
 
+    p_del = sub.add_parser("delete")
+    p_del.add_argument("remote_path", help="path en el repo a borrar")
+    p_del.add_argument("--message", default="embebidos3 delete")
+
     p_info = sub.add_parser("head-revision")
 
     args = parser.parse_args()
     if not args.cmd:
-        parser.error("subcommand required: download | upload | head-revision")
+        parser.error("subcommand required: download | upload | delete | head-revision")
     if args.cmd == "download":
         download(args.filename, Path(args.local_path), revision=args.revision)
         print(f"OK: {args.filename} -> {args.local_path}")
     elif args.cmd == "upload":
         result = upload_file_inline(Path(args.local_path), args.remote_path, args.message)
         print(f"OK: {result.get('commitUrl', 'commit OK')}")
+    elif args.cmd == "delete":
+        result = delete_file_inline(args.remote_path, args.message)
+        print(f"OK delete: {result.get('commitUrl', 'commit OK')}")
     elif args.cmd == "head-revision":
         print(get_head_revision())

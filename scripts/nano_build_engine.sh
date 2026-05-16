@@ -36,17 +36,22 @@ JS() { python3 "${ROOT}/scripts/builder_state.py" "${JOB_ID}" "$@"; }
 
 cleanup() {
     local code=$?
-    [[ -n "${TEGRA_PID:-}" ]] && kill "$TEGRA_PID" 2>/dev/null || true
-    rm -f "$STAGING_ENGINE"
+    # DESACTIVAR set -e dentro del cleanup. Si una linea falla en medio del trap,
+    # set -e abortaria el trap y nunca llegariamos al systemctl start final, que es
+    # CRITICO para no dejar el server caido.
+    set +e
+    [[ -n "${TEGRA_PID:-}" ]] && kill "$TEGRA_PID" 2>/dev/null
+    rm -f "$STAGING_ENGINE" 2>/dev/null
     # restore Nano (idempotente)
-    sudo systemctl start lightdm.service 2>/dev/null || true
-    sudo sysctl vm.swappiness=60 >/dev/null 2>&1 || true
+    sudo systemctl start lightdm.service 2>/dev/null
+    sudo sysctl vm.swappiness=60 >/dev/null 2>&1
     if [[ $code -ne 0 ]]; then
         echo "[BUILD] FAILED exit=$code" >&2
-        JS finalize --phase failed --exit-code "$code" 2>/dev/null || true
-        systemctl is-active --quiet embebidos3-server.service \
-            || sudo systemctl start embebidos3-server.service
+        JS finalize --phase failed --exit-code "$code" 2>/dev/null
     fi
+    # ARRANQUE INCONDICIONAL del server: la idempotencia la da systemd (si ya esta
+    # active, no-op). Es el ultimo paso del cleanup, garantizado por set +e arriba.
+    sudo systemctl start embebidos3-server.service 2>/dev/null
 }
 trap cleanup EXIT
 
@@ -145,21 +150,40 @@ python3 "${ROOT}/scripts/validate_engine.py" "$STAGING_ENGINE" > "$VAL_JSON" || 
     { echo "[BUILD] validación falló" >&2; cat "$VAL_JSON" >&2 || true; exit 3; }
 JS phase --name validated --pct 85
 
-# 9. backup viejo a HF (si existe .previous)
+# 9. backup viejo local + manifest a HF (si existe .previous)
+# Fix V-1 (2026-05-16): el upload del binario al endpoint /commit/main rompía con
+# 400 porque el shape NDJSON no estaba implementado y 13.5 MB fuerza LFS de todos
+# modos. Estrategia A+ híbrida: el binario queda en engines-archive/ del Nano
+# (fuente de verdad para rollback inmediato) y solo el manifest (~1 KB) sube a HF
+# como índice remoto buscable, vía NDJSON inline sin LFS.
 if [[ -f "$PREV_ENGINE" ]]; then
     JS phase --name backing_up_previous --pct 88
     TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
-    OLD_SHA=$(sha256sum "$PREV_ENGINE" | awk '{print $1}' | head -c 8)
-    HF_TOKEN="$HF_TOKEN" python3 "${ROOT}/scripts/hf_rest.py" upload \
-        "$PREV_ENGINE" \
-        "engines-archive/${TIMESTAMP}__${OLD_SHA}/best_fp16.engine" \
-        --message "embebidos3 backup engine ${OLD_SHA}" \
-        || { echo "[BUILD] backup HF falló, abort cleanup" >&2; exit 4; }
-    if [[ -f "$PREV_META" ]]; then
+    OLD_SHA_FULL=$(sha256sum "$PREV_ENGINE" | awk '{print $1}')
+    OLD_SHA="${OLD_SHA_FULL:0:8}"
+    OLD_SIZE=$(stat -c %s "$PREV_ENGINE")
+    ARCHIVE_DIR="${ROOT}/engines-archive/${TIMESTAMP}__${OLD_SHA}"
+    ARCHIVED_ENGINE="${ARCHIVE_DIR}/best_fp16.engine"
+    ARCHIVED_META="${ARCHIVE_DIR}/best_fp16.engine.meta.json"
+    mkdir -p "$ARCHIVE_DIR"
+    cp -p "$PREV_ENGINE" "$ARCHIVED_ENGINE"
+    [[ -f "$PREV_META" ]] && cp -p "$PREV_META" "$ARCHIVED_META" || true
+    MANIFEST_ARGS=(
+        --archive-dir "$ARCHIVE_DIR"
+        --engine "$ARCHIVED_ENGINE"
+        --sha256 "$OLD_SHA_FULL"
+        --size-bytes "$OLD_SIZE"
+        --timestamp "$TIMESTAMP"
+    )
+    [[ -f "$ARCHIVED_META" ]] && MANIFEST_ARGS+=(--source-meta "$ARCHIVED_META")
+    python3 "${ROOT}/scripts/write_archive_manifest.py" "${MANIFEST_ARGS[@]}" \
+        || echo "[BUILD] WARN: write_archive_manifest falló, archive local conservado en ${ARCHIVE_DIR}" >&2
+    if [[ -f "${ARCHIVE_DIR}/manifest.json" ]]; then
         HF_TOKEN="$HF_TOKEN" python3 "${ROOT}/scripts/hf_rest.py" upload \
-            "$PREV_META" \
-            "engines-archive/${TIMESTAMP}__${OLD_SHA}/meta.json" \
-            --message "embebidos3 backup meta ${OLD_SHA}" || true
+            "${ARCHIVE_DIR}/manifest.json" \
+            "engines-archive/${TIMESTAMP}__${OLD_SHA}/manifest.json" \
+            --message "embebidos3 archive manifest ${OLD_SHA}" \
+            || echo "[BUILD] WARN: upload manifest a HF falló, archive local conservado en ${ARCHIVE_DIR}" >&2
     fi
 fi
 JS phase --name backed_up_previous --pct 92
