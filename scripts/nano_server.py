@@ -30,6 +30,8 @@ import signal
 import subprocess
 import threading
 import time
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -37,9 +39,11 @@ import cv2
 import numpy as np
 import pycuda.driver as cuda
 import tensorrt as trt
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
+import hf_rest
 from nano_server_constants import (
     ACTIVE_ENGINE, IMGSZ, CLASSES, DEFAULT_CONF, DEFAULT_NMS,
     JOB_STATE_FILE, HEARTBEAT_STALE_SEC,
@@ -441,6 +445,43 @@ def model_state():
         "active_engine": None,
         "previous_engine": previous_meta,
         "active_job": None,
+    }
+
+
+# ---------- Job lifecycle endpoints (Fase E) ----------------------------------
+class BuildRequest(BaseModel):
+    force: bool = False
+
+
+def _generate_job_id():
+    ts = datetime.utcnow().strftime("%Y%m%d-%H%M")
+    suffix = uuid.uuid4().hex[:6]
+    return "{}-{}".format(ts, suffix)
+
+
+@app.post("/model/build", status_code=202)
+def model_build(req: BuildRequest = BuildRequest()):
+    active = _read_active_job()
+    if active:
+        raise HTTPException(
+            status_code=409,
+            detail={"ok": False, "error": "build_in_progress",
+                    "active_job_id": active.get("job_id")},
+        )
+    job_id = _generate_job_id()
+    try:
+        subprocess.run(
+            ["sudo", "/usr/local/bin/embebidos3-builder-launch", job_id],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(500, {"ok": False, "error": "launch_failed",
+                                  "stderr": e.stderr})
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "monitor_url": "/jobs/{}".format(job_id),
+        "logs_stream_url": "/jobs/{}/logs".format(job_id),
     }
 
 
