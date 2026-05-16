@@ -2,7 +2,11 @@
 import pytest
 import requests_mock
 
-from hf_rest import download, REPO, BASE, list_files, repo_info, get_head_revision
+from hf_rest import (
+    download, REPO, BASE,
+    list_files, repo_info, get_head_revision,
+    upload_file_inline,
+)
 
 
 def test_download_streaming(tmp_path):
@@ -67,3 +71,24 @@ def test_get_head_revision():
         m.get(url, json=fake_response)
         rev = get_head_revision()
     assert rev == "65c1634404ea379e38522885101222a07242f37f9"
+
+
+def test_upload_file_inline_success(tmp_path):
+    local = tmp_path / "best_fp16.engine"
+    local.write_bytes(b"\x00" * 1024)
+    fake_response = {"success": True, "commitUrl": "https://huggingface.co/..."}
+    url = f"{BASE}/api/models/{REPO}/commit/main"
+    with requests_mock.Mocker() as m:
+        m.post(url, json=fake_response)
+        result = upload_file_inline(local, "engines-archive/test/best_fp16.engine", "test commit")
+    assert result["success"] is True
+
+
+def test_upload_file_inline_lfs_raises(tmp_path):
+    local = tmp_path / "best_fp16.engine"
+    local.write_bytes(b"\x00" * 1024)
+    url = f"{BASE}/api/models/{REPO}/commit/main"
+    with requests_mock.Mocker() as m:
+        m.post(url, status_code=422, text="LFS upload required for this file type")
+        with pytest.raises(RuntimeError, match="LFS"):
+            upload_file_inline(local, "engines-archive/test/best_fp16.engine")

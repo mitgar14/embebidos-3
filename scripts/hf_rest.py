@@ -54,3 +54,32 @@ def repo_info(revision: str = "main", timeout: int = 30) -> Dict:
 def get_head_revision(timeout: int = 30) -> str:
     """SHA del último commit en main."""
     return repo_info("main", timeout=timeout).get("sha", "")
+
+
+def upload_file_inline(local_path: Path, remote_path: str,
+                       commit_msg: str = "embebidos3 backup",
+                       branch: str = "main", timeout: int = 300) -> Dict:
+    """Upload sin LFS, base64 inline. Apto para archivos < ~50 MB.
+    Si el server exige LFS (422), levanta RuntimeError con instrucción para fallback."""
+    local_path = Path(local_path)
+    content_b64 = base64.b64encode(local_path.read_bytes()).decode("ascii")
+    payload = {
+        "summary": commit_msg,
+        "files": [{
+            "path": remote_path,
+            "encoding": "base64",
+            "content": content_b64,
+        }]
+    }
+    url = f"{BASE}/api/models/{REPO}/commit/{branch}"
+    r = requests.post(
+        url,
+        headers={**_headers(), "Content-Type": "application/json"},
+        data=json.dumps(payload),
+        timeout=timeout,
+    )
+    if r.status_code == 422 and "lfs" in r.text.lower():
+        raise RuntimeError(f"Servidor exige LFS para {remote_path}. "
+                           "Ver fallback con git-lfs en docs.")
+    r.raise_for_status()
+    return r.json()
