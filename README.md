@@ -152,6 +152,43 @@ trtexec --onnx=/home/jetson/models/best.onnx \
 | **V1** (smoke test) | Validar si `EfficientNMS_TRT` funciona en este Nano específico. | Re-export ONNX con `nms=True, format=onnx` (Ultralytics inyecta nodo `EfficientNMS_TRT`), recompilar engine. El plugin está presente en el binary JP 4.6.1 con el fix del issue #1538 (commit `3235cc2`, jul-2021). |
 | **V2** (fallback) | Si V1 falla. | `BatchedNMSDynamic_TRT` — plugin estable del mismo binary. |
 
+### 5.5 Pipeline dashboard end-to-end (compilación + tracking + UI)
+
+A partir del 2026-05-16 todo el ciclo de vida del engine se opera desde el dashboard web. Reemplaza el flujo manual `scp + trtexec` de §5.3.
+
+**Componentes en el Nano** (instalados por `scripts/nano_install_systemd.sh`):
+
+- `embebidos3-server.service` — FastAPI/WS (uvicorn foreground, Type=simple, Restart=on-failure). Expone WS de inferencia + endpoints de gestión.
+- `embebidos3-builder@<jobid>.service` — templated oneshot que ejecuta `nano_build_engine.sh` (12 fases: lock → download manifest → download ONNX → stop server → prep Nano (swap 8GB, lightdm off) → trtexec → validate → swap atómico → restore → cleanup). Tarda 15-40 min en Maxwell sm_53.
+- `/etc/sudoers.d/embebidos3` — 14 reglas granulares NOPASSWD con paths absolutos (cuidado: `fallocate` está en `/usr/bin/`, no `/sbin/`).
+- `/run/embebidos3/job.json` — estado del job activo con heartbeat + PID + cmdline check (recovery automático al startup).
+- `engines/best_fp16.engine` + `engines/best_fp16.engine.meta.json` — el `.meta.json` registra `hf_revision`, `onnx_sha256`, `engine_sha256`, `trtexec_args`, `validation`. Sin meta el sistema reporta `state=no_model`.
+
+**Endpoints HTTP** (consumidos por `scripts/dashboard/modelo.js`):
+
+| Endpoint | Función |
+|---|---|
+| `GET /model/state` | `no_model \| ready \| degraded \| building` + `engine_binary_present` |
+| `POST /model/build {force, workspace_mb?}` | Lanza job (202 + `job_id`) |
+| `POST /model/check-updates` | Compara `hf_revision` Y `onnx_sha256` (LFS oid de HF, sin descargar) |
+| `POST /model/rollback` | Swap inverso con `.previous` |
+| `POST /model/adopt` | Registra meta retroactivo para engine huérfano (binario sin meta) |
+| `GET /jobs/<id>/logs` | SSE stream de logs en vivo |
+| `DELETE /jobs/<id>` | Cancela vía SIGTERM al builder |
+
+**Dashboard local** (sin tocar el Nano):
+
+```powershell
+# Sirve scripts/dashboard/ en localhost:8001 + abre browser, apunta al Nano por Tailscale
+uv run --with requests python scripts/launch_demo.py
+# o sin abrir browser:
+uv run --with requests python scripts/launch_demo.py --no-browser
+```
+
+Tab `modelo` muestra: hero card con CTA "descargar y compilar engine" si no hay modelo; banner "adoptar engine existente" si hay binario sin meta; tarjeta "Modelo activo" con metadata + badge `ADOPTADO` cuando aplica; logs SSE en vivo durante el build; cross-tab banner en pestaña `live` cuando hay build en curso.
+
+**Skill para Claude Code**: `.claude/skills/embebidos3-nano/SKILL.md` documenta endpoints, paths del filesystem, sudoers, restricciones Py3.6, y motiva verificación del estado del Nano antes de cualquier cambio (evita incompatibilidades por suposiciones obsoletas).
+
 ---
 
 ## 6. Aportes para el informe IEEE
