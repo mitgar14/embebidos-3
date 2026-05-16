@@ -71,6 +71,26 @@ def get_head_revision(timeout: int = 30) -> str:
     return sha
 
 
+def get_file_lfs_sha256(filepath: str, revision: str = "main",
+                        timeout: int = 30) -> Optional[str]:
+    """Devuelve el SHA256 hex del archivo (LFS oid) en revision, o None si no es LFS
+    ni existe. Consulta /api/models/{repo}/tree/{rev}[/{dirname}] y filtra por path.
+    NO descarga el archivo; solo metadata (~1 KB JSON).
+    """
+    from posixpath import dirname as _pdirname
+    dn = _pdirname(filepath)
+    url = f"{BASE}/api/models/{REPO}/tree/{revision}"
+    if dn:
+        url += f"/{dn}"
+    r = requests.get(url, headers=_headers(), timeout=timeout)
+    r.raise_for_status()
+    for item in r.json():
+        if item.get("path") == filepath:
+            lfs = item.get("lfs") or {}
+            return lfs.get("oid") or None
+    return None
+
+
 def upload_file_inline(local_path: Path, remote_path: str,
                        commit_msg: str = "embebidos3 backup",
                        branch: str = "main", timeout: int = 300) -> Dict:

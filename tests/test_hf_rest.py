@@ -5,6 +5,7 @@ import requests_mock
 from hf_rest import (
     download, REPO, BASE,
     list_files, repo_info, get_head_revision,
+    get_file_lfs_sha256,
     upload_file_inline,
 )
 
@@ -174,6 +175,68 @@ def test_upload_sends_base64_body(tmp_path, monkeypatch):
     assert f["path"] == "engines-archive/test/small_engine"
     assert f["encoding"] == "base64"
     assert base64.b64decode(f["content"]) == b"hello world"
+
+
+def test_get_file_lfs_sha256_returns_oid():
+    """tree/{rev}/{dirname} debe devolver el oid LFS del archivo."""
+    fake_oid = "223f1a71c4b1bd08effdfa02fabb1ce259a3a507015d39e2359b5bec3dc805ad"
+    url = f"{BASE}/api/models/{REPO}/tree/main/exports"
+    with requests_mock.Mocker() as m:
+        m.get(url, json=[
+            {"type": "file", "oid": "git-pointer-sha",
+             "size": 12169740,
+             "lfs": {"oid": fake_oid, "size": 12169740, "pointerSize": 133},
+             "path": "exports/best.onnx"},
+        ])
+        result = get_file_lfs_sha256("exports/best.onnx")
+    assert result == fake_oid
+
+
+def test_get_file_lfs_sha256_with_revision():
+    """Debe usar la revision pasada como path-segment, no como query."""
+    fake_oid = "deadbeef" * 8
+    url = f"{BASE}/api/models/{REPO}/tree/abc1234/exports"
+    with requests_mock.Mocker() as m:
+        m.get(url, json=[
+            {"type": "file", "path": "exports/best.onnx",
+             "lfs": {"oid": fake_oid}},
+        ])
+        result = get_file_lfs_sha256("exports/best.onnx", revision="abc1234")
+    assert result == fake_oid
+
+
+def test_get_file_lfs_sha256_returns_none_when_not_lfs():
+    """Si el archivo no es LFS (no tiene campo lfs), devuelve None."""
+    url = f"{BASE}/api/models/{REPO}/tree/main"
+    with requests_mock.Mocker() as m:
+        m.get(url, json=[
+            {"type": "file", "path": "README.md", "size": 1287},
+        ])
+        result = get_file_lfs_sha256("README.md")
+    assert result is None
+
+
+def test_get_file_lfs_sha256_returns_none_when_file_missing():
+    """Si el archivo no está en el listing, devuelve None."""
+    url = f"{BASE}/api/models/{REPO}/tree/main/exports"
+    with requests_mock.Mocker() as m:
+        m.get(url, json=[
+            {"type": "file", "path": "exports/other.onnx", "lfs": {"oid": "xxx"}},
+        ])
+        result = get_file_lfs_sha256("exports/best.onnx")
+    assert result is None
+
+
+def test_get_file_lfs_sha256_root_file():
+    """Para archivos en la raíz, la URL no debe tener trailing /."""
+    fake_oid = "feedface" * 8
+    url = f"{BASE}/api/models/{REPO}/tree/main"
+    with requests_mock.Mocker() as m:
+        m.get(url, json=[
+            {"type": "file", "path": "best.onnx", "lfs": {"oid": fake_oid}},
+        ])
+        result = get_file_lfs_sha256("best.onnx")
+    assert result == fake_oid
 
 
 def test_get_head_revision_raises_on_missing_sha(monkeypatch):

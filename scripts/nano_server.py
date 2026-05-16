@@ -544,16 +544,29 @@ def model_rollback():
 
 @app.post("/model/check-updates")
 def check_updates():
-    current_meta = _read_engine_meta(ACTIVE_ENGINE_META)
-    current_rev = (current_meta or {}).get("hf_revision")
+    current_meta = _read_engine_meta(ACTIVE_ENGINE_META) or {}
+    current_rev = current_meta.get("hf_revision")
+    current_onnx = current_meta.get("onnx_sha256")
     try:
         latest_rev = hf_rest.get_head_revision()
+        latest_onnx = hf_rest.get_file_lfs_sha256("exports/best.onnx", revision=latest_rev)
     except Exception as e:
         raise HTTPException(503, {"ok": False, "error": "hf_unreachable", "detail": str(e)})
+    same_revision = current_rev == latest_rev
+    same_onnx = (
+        bool(current_onnx) and bool(latest_onnx) and current_onnx == latest_onnx
+    )
+    # up_to_date refleja el CONTENIDO del modelo (ONNX): si el sha256 coincide,
+    # el modelo cargado es el mismo aunque haya commits cosméticos nuevos en HF.
     return {
-        "up_to_date": current_rev == latest_rev,
+        "up_to_date": same_onnx,
+        "same_revision": same_revision,
+        "same_onnx": same_onnx,
+        "has_engine": current_rev is not None,
         "current_revision": current_rev,
         "latest_revision": latest_rev,
+        "current_onnx_sha256": current_onnx,
+        "latest_onnx_sha256": latest_onnx,
     }
 
 
