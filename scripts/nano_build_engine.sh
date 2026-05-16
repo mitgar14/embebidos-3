@@ -96,7 +96,7 @@ sudo systemctl stop lightdm.service 2>/dev/null || true
 sudo systemctl disable nvzramconfig 2>/dev/null || true
 sudo swapoff -a
 if [[ ! -f /mnt/swap.img ]]; then
-    sudo fallocate -l 8G /mnt/swap.img
+    sudo /usr/bin/fallocate -l 8G /mnt/swap.img
     sudo chmod 600 /mnt/swap.img
     sudo mkswap /mnt/swap.img
 fi

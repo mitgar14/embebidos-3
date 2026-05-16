@@ -34,7 +34,7 @@ jetson ALL=(root) NOPASSWD: /bin/systemctl disable nvzramconfig
 jetson ALL=(root) NOPASSWD: /sbin/swapoff -a
 jetson ALL=(root) NOPASSWD: /sbin/swapon /mnt/swap.img
 jetson ALL=(root) NOPASSWD: /sbin/sysctl vm.swappiness=*
-jetson ALL=(root) NOPASSWD: /sbin/fallocate -l 8G /mnt/swap.img
+jetson ALL=(root) NOPASSWD: /usr/bin/fallocate -l 8G /mnt/swap.img
 jetson ALL=(root) NOPASSWD: /bin/chmod 600 /mnt/swap.img
 jetson ALL=(root) NOPASSWD: /sbin/mkswap /mnt/swap.img
 jetson ALL=(root) NOPASSWD: /usr/bin/tee /proc/sys/vm/drop_caches

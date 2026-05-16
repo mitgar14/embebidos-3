@@ -492,7 +492,8 @@ def model_build(req: BuildRequest = BuildRequest()):
     try:
         subprocess.run(
             ["sudo", "/usr/local/bin/embebidos3-builder-launch", job_id],
-            check=True, capture_output=True, text=True, timeout=10,
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=10,
         )
     except subprocess.CalledProcessError as e:
         raise HTTPException(500, {"ok": False, "error": "launch_failed",
@@ -645,7 +646,8 @@ def jobs_cancel(job_id: str):
     try:
         subprocess.run(
             ["sudo", "/bin/systemctl", "stop", "embebidos3-builder@{}.service".format(job_id)],
-            check=True, capture_output=True, text=True, timeout=15,
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=15,
         )
     except subprocess.CalledProcessError as e:
         raise HTTPException(500, {"ok": False, "error": "stop_failed", "stderr": e.stderr})
