@@ -23,14 +23,26 @@ def download(filename: str, local_path: Path, revision: str = "main",
     """Descarga un archivo del repo a local_path. Streaming, atomic write."""
     url = f"{BASE}/{REPO}/resolve/{revision}/{filename}"
     r = requests.get(url, headers=_headers(), stream=True, timeout=timeout)
+    if r.status_code in (401, 403):
+        raise RuntimeError(
+            f"HF auth failed for {filename} (status {r.status_code}). "
+            f"Check HF_TOKEN env var."
+        )
     r.raise_for_status()
     local_path = Path(local_path)
     local_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = local_path.with_suffix(local_path.suffix + ".tmp")
-    with open(tmp, "wb") as f:
-        for chunk in r.iter_content(chunk_size=chunk_size):
-            f.write(chunk)
-    tmp.rename(local_path)
+    try:
+        with open(tmp, "wb") as f:
+            for chunk in r.iter_content(chunk_size=chunk_size):
+                f.write(chunk)
+        tmp.rename(local_path)
+    except Exception:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def list_files(revision: str = "main", timeout: int = 30) -> List[Dict]:
@@ -52,8 +64,11 @@ def repo_info(revision: str = "main", timeout: int = 30) -> Dict:
 
 
 def get_head_revision(timeout: int = 30) -> str:
-    """SHA del último commit en main."""
-    return repo_info("main", timeout=timeout).get("sha", "")
+    """SHA del último commit en main. Raises RuntimeError si HF no devuelve `sha`."""
+    sha = repo_info("main", timeout=timeout).get("sha")
+    if not sha:
+        raise RuntimeError("HF response missing 'sha' field")
+    return sha
 
 
 def upload_file_inline(local_path: Path, remote_path: str,
@@ -81,6 +96,11 @@ def upload_file_inline(local_path: Path, remote_path: str,
     if r.status_code == 422 and "lfs" in r.text.lower():
         raise RuntimeError(f"Servidor exige LFS para {remote_path}. "
                            "Ver fallback con git-lfs en docs.")
+    if r.status_code in (401, 403):
+        raise RuntimeError(
+            f"HF auth failed uploading to {remote_path} (status {r.status_code}). "
+            f"Check HF_TOKEN env var."
+        )
     r.raise_for_status()
     return r.json()
 

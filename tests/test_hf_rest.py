@@ -92,3 +92,111 @@ def test_upload_file_inline_lfs_raises(tmp_path):
         m.post(url, status_code=422, text="LFS upload required for this file type")
         with pytest.raises(RuntimeError, match="LFS"):
             upload_file_inline(local, "engines-archive/test/best_fp16.engine")
+
+
+def test_download_sends_auth_header(tmp_path, monkeypatch):
+    """Auth header must be sent when HF_TOKEN is set."""
+    monkeypatch.setenv("HF_TOKEN", "hf_testtoken_abc")
+    url = f"{BASE}/{REPO}/resolve/main/exports/best.onnx"
+    out = tmp_path / "best.onnx"
+    with requests_mock.Mocker() as m:
+        m.get(url, content=b"x")
+        download("exports/best.onnx", out)
+    assert m.last_request.headers["Authorization"] == "Bearer hf_testtoken_abc"
+
+
+def test_list_files_sends_auth_header(monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "hf_testtoken_abc")
+    url = f"{BASE}/api/models/{REPO}"
+    with requests_mock.Mocker() as m:
+        m.get(url, json={"siblings": []})
+        list_files()
+    assert m.last_request.headers["Authorization"] == "Bearer hf_testtoken_abc"
+
+
+def test_no_auth_header_when_token_missing(tmp_path, monkeypatch):
+    """When HF_TOKEN is unset, no Authorization header should be sent (public repo case)."""
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    url = f"{BASE}/{REPO}/resolve/main/exports/best.onnx"
+    out = tmp_path / "best.onnx"
+    with requests_mock.Mocker() as m:
+        m.get(url, content=b"x")
+        download("exports/best.onnx", out)
+    assert "Authorization" not in m.last_request.headers
+
+
+def test_download_401_raises_auth_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "hf_invalid")
+    url = f"{BASE}/{REPO}/resolve/main/exports/best.onnx"
+    out = tmp_path / "best.onnx"
+    with requests_mock.Mocker() as m:
+        m.get(url, status_code=401, text="invalid token")
+        with pytest.raises(RuntimeError, match="HF auth failed"):
+            download("exports/best.onnx", out)
+    assert not out.exists()
+
+
+def test_download_403_raises_auth_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "hf_token_no_perms")
+    url = f"{BASE}/{REPO}/resolve/main/exports/best.onnx"
+    out = tmp_path / "best.onnx"
+    with requests_mock.Mocker() as m:
+        m.get(url, status_code=403, text="forbidden")
+        with pytest.raises(RuntimeError, match="HF auth failed"):
+            download("exports/best.onnx", out)
+
+
+def test_upload_401_raises_auth_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "hf_invalid")
+    local = tmp_path / "engine"
+    local.write_bytes(b"x")
+    url = f"{BASE}/api/models/{REPO}/commit/main"
+    with requests_mock.Mocker() as m:
+        m.post(url, status_code=401, text="invalid token")
+        with pytest.raises(RuntimeError, match="HF auth failed"):
+            upload_file_inline(local, "engines-archive/x/engine")
+
+
+def test_upload_sends_base64_body(tmp_path, monkeypatch):
+    """Upload payload must contain base64 of the file bytes."""
+    import base64
+    monkeypatch.setenv("HF_TOKEN", "hf_test")
+    local = tmp_path / "small_engine"
+    local.write_bytes(b"hello world")
+    url = f"{BASE}/api/models/{REPO}/commit/main"
+    with requests_mock.Mocker() as m:
+        m.post(url, json={"success": True})
+        upload_file_inline(local, "engines-archive/test/small_engine", "test msg")
+    payload = m.last_request.json()
+    assert payload["summary"] == "test msg"
+    assert len(payload["files"]) == 1
+    f = payload["files"][0]
+    assert f["path"] == "engines-archive/test/small_engine"
+    assert f["encoding"] == "base64"
+    assert base64.b64decode(f["content"]) == b"hello world"
+
+
+def test_get_head_revision_raises_on_missing_sha(monkeypatch):
+    url = f"{BASE}/api/models/{REPO}"
+    with requests_mock.Mocker() as m:
+        m.get(url, json={})
+        with pytest.raises(RuntimeError, match="missing 'sha'"):
+            get_head_revision()
+
+
+def test_download_cleans_tmp_on_mid_stream_failure(tmp_path, monkeypatch):
+    """If iter_content raises mid-stream, the .tmp file must not be left behind."""
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    url = f"{BASE}/{REPO}/resolve/main/exports/best.onnx"
+    out = tmp_path / "best.onnx"
+    # Provide a non-streamable response, then trigger an error inside iter_content
+    # by mocking the response to raise on read. requests_mock supports raising via exc=.
+    import requests as r_mod
+    with requests_mock.Mocker() as m:
+        m.get(url, exc=r_mod.exceptions.ConnectionError("simulated drop"))
+        with pytest.raises(Exception):
+            download("exports/best.onnx", out)
+    assert not out.exists()
+    # also no .tmp leak
+    tmp = out.parent / "best.onnx.tmp"
+    assert not tmp.exists()
