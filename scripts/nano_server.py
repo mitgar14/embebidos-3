@@ -501,6 +501,21 @@ def jobs_get(job_id: str = FPath(..., pattern=r"^[A-Za-z0-9_-]{10,40}$")):
     raise HTTPException(404, {"ok": False, "error": "job_not_found"})
 
 
+@app.delete("/jobs/{job_id}")
+def jobs_cancel(job_id: str):
+    active = _read_active_job()
+    if not active or active.get("job_id") != job_id:
+        raise HTTPException(404, {"ok": False, "error": "job_not_active"})
+    try:
+        subprocess.run(
+            ["sudo", "/bin/systemctl", "stop", "embebidos3-builder@{}.service".format(job_id)],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(500, {"ok": False, "error": "stop_failed", "stderr": e.stderr})
+    return {"ok": True, "phase": "cancelling", "job_id": job_id}
+
+
 @app.get("/jobs/{job_id}/logs")
 def jobs_logs(job_id: str, follow: bool = True):
     log = JOBS_LOGS_DIR / "{}.log".format(job_id)

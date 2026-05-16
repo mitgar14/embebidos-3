@@ -50,6 +50,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
+cancel_handler() {
+    echo "[BUILD] SIGTERM recibido, cancelando..." >&2
+    pkill -KILL -P $$ trtexec 2>/dev/null || true
+    JS finalize --phase cancelled --exit-code 130 2>/dev/null || true
+    exit 130
+}
+trap cancel_handler SIGTERM
+
 JS phase --name acquired_lock --pct 5
 
 # 1. download manifest
