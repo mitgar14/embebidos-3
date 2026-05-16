@@ -70,6 +70,17 @@ class TRTWorker(threading.Thread):
         self._lock = threading.Lock()
         self._fps_window = []  # timestamps últimos N frames procesados
         self._stats = {"total_processed": 0, "last_t_infer_ms": 0.0}
+        self._swap_path: Optional[str] = None
+        self._swap_event = threading.Event()
+        # Engine state as instance attrs (not locals in run()) so _unload can destroy them.
+        self._runtime = None
+        self._engine = None
+        self._trt_ctx = None
+        self._stream = None
+        self._host_in = self._host_out = None
+        self._dev_in = self._dev_out = None
+        self._bindings = []
+        self._in_shape = self._out_shape = None
 
     def set_conf(self, v: float) -> None:
         with self._lock:
@@ -107,6 +118,48 @@ class TRTWorker(threading.Thread):
 
     def wait_ready(self, timeout: float = 30.0) -> bool:
         return self._ready.wait(timeout)
+
+    def request_swap(self, new_path: str) -> None:
+        """Pide hot-swap a un engine nuevo. Llamado desde el handler HTTP."""
+        with self._lock:
+            self._swap_path = new_path
+        self._swap_event.set()
+
+    def _load_engine(self, path: str) -> None:
+        """Carga engine + bindings desde path. Asume cu_ctx pushed."""
+        logger = trt.Logger(trt.Logger.WARNING)
+        self._runtime = trt.Runtime(logger)
+        with open(path, "rb") as f:
+            self._engine = self._runtime.deserialize_cuda_engine(f.read())
+        self._trt_ctx = self._engine.create_execution_context()
+        self._bindings = []
+        for i in range(self._engine.num_bindings):
+            shape = tuple(self._engine.get_binding_shape(i))
+            dtype = trt.nptype(self._engine.get_binding_dtype(i))
+            size = int(np.prod(shape))
+            h = cuda.pagelocked_empty(size, dtype=dtype)
+            d = cuda.mem_alloc(h.nbytes)
+            self._bindings.append(int(d))
+            if self._engine.binding_is_input(i):
+                self._host_in = h; self._dev_in = d; self._in_shape = shape
+            else:
+                self._host_out = h; self._dev_out = d; self._out_shape = shape
+        self._stream = cuda.Stream()
+        print(f"[trt-worker] engine cargado desde {path}. in={self._in_shape} out={self._out_shape}", flush=True)
+
+    def _unload_engine(self) -> None:
+        """Destruye engine + buffers. Asume cu_ctx pushed.
+        Orden de destrucción (mnemon 881e5569): stream -> outputs -> inputs -> ctx -> engine -> runtime."""
+        self._stream = None
+        self._dev_out = None
+        self._host_out = None
+        self._dev_in = None
+        self._host_in = None
+        self._bindings = []
+        self._trt_ctx = None
+        self._engine = None
+        self._runtime = None
+        print("[trt-worker] engine descargado", flush=True)
 
     def _letterbox(self, img: np.ndarray):
         h, w = img.shape[:2]
@@ -158,96 +211,91 @@ class TRTWorker(threading.Thread):
         return dets
 
     def run(self) -> None:
-        # CUDA init dentro del thread — push/pop por iteración.
         cuda.init()
         cu_ctx = cuda.Device(0).make_context()
         try:
-            logger = trt.Logger(trt.Logger.WARNING)
-            runtime = trt.Runtime(logger)
-            with open(self.engine_path, "rb") as f:
-                engine = runtime.deserialize_cuda_engine(f.read())
-            trt_ctx = engine.create_execution_context()
-            # bindings: leer todos, devolver primer input + primer output
-            n_bindings = engine.num_bindings
-            bindings = []
-            host_in = host_out = None
-            dev_in = dev_out = None
-            in_shape = out_shape = None
-            for i in range(n_bindings):
-                shape = tuple(engine.get_binding_shape(i))
-                dtype = trt.nptype(engine.get_binding_dtype(i))
-                size = int(np.prod(shape))
-                h = cuda.pagelocked_empty(size, dtype=dtype)
-                d = cuda.mem_alloc(h.nbytes)
-                bindings.append(int(d))
-                if engine.binding_is_input(i):
-                    host_in = h; dev_in = d; in_shape = shape
-                else:
-                    host_out = h; dev_out = d; out_shape = shape
-            stream = cuda.Stream()
-            print(f"[trt-worker] engine cargado. in={in_shape} out={out_shape}", flush=True)
-            self._ready.set()
-        finally:
+            cu_ctx.push()
+            self._load_engine(str(self.engine_path))
             cu_ctx.pop()
+            self._ready.set()
 
-        while not self._stop.is_set():
-            item = self.in_q.get()
-            if item is None:
-                break
-            jpeg_bytes, client_ts_ms, seq, loop, future = item
-            t_start = time.perf_counter()
-            try:
-                arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
-                img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                if img is None:
-                    raise RuntimeError("imdecode failed")
-                oh, ow = img.shape[:2]
-                lb, r, dx, dy = self._letterbox(img)
-                rgb = cv2.cvtColor(lb, cv2.COLOR_BGR2RGB)
-                inp = rgb.transpose(2, 0, 1).astype(np.float32) / 255.0
+            while not self._stop.is_set():
+                # ¿hay swap pendiente?
+                if self._swap_event.is_set():
+                    self._swap_event.clear()
+                    with self._lock:
+                        new_path = self._swap_path
+                    if new_path:
+                        cu_ctx.push()
+                        try:
+                            self._unload_engine()
+                            self._load_engine(new_path)
+                            self.engine_path = new_path
+                        finally:
+                            cu_ctx.pop()
 
-                cu_ctx.push()
+                item = self.in_q.get()
+                if item is None:
+                    break
+
+                jpeg_bytes, client_ts_ms, seq, loop, future = item
+                t_start = time.perf_counter()
                 try:
-                    np.copyto(host_in, inp.ravel())
-                    cuda.memcpy_htod_async(dev_in, host_in, stream)
-                    trt_ctx.execute_async_v2(bindings, stream.handle)
-                    cuda.memcpy_dtoh_async(host_out, dev_out, stream)
-                    stream.synchronize()
-                finally:
-                    cu_ctx.pop()
+                    arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+                    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                    if img is None:
+                        raise RuntimeError("imdecode failed")
+                    oh, ow = img.shape[:2]
+                    lb, r, dx, dy = self._letterbox(img)
+                    rgb = cv2.cvtColor(lb, cv2.COLOR_BGR2RGB)
+                    inp = rgb.transpose(2, 0, 1).astype(np.float32) / 255.0
 
-                raw = host_out.reshape(out_shape)
-                dets = self._postprocess(raw, (r, dx, dy), (ow, oh))
-                t_end = time.perf_counter()
-                t_infer_ms = (t_end - t_start) * 1000.0
+                    cu_ctx.push()
+                    try:
+                        np.copyto(self._host_in, inp.ravel())
+                        cuda.memcpy_htod_async(self._dev_in, self._host_in, self._stream)
+                        self._trt_ctx.execute_async_v2(self._bindings, self._stream.handle)
+                        cuda.memcpy_dtoh_async(self._host_out, self._dev_out, self._stream)
+                        self._stream.synchronize()
+                    finally:
+                        cu_ctx.pop()
 
-                with self._lock:
-                    self._fps_window.append(t_end)
-                    self._stats["total_processed"] += 1
-                    self._stats["last_t_infer_ms"] = t_infer_ms
+                    raw = self._host_out.reshape(self._out_shape)
+                    dets = self._postprocess(raw, (r, dx, dy), (ow, oh))
+                    t_end = time.perf_counter()
+                    t_infer_ms = (t_end - t_start) * 1000.0
 
-                result = {
-                    "ok": True,
-                    "bboxes": dets,
-                    "t_infer_ms": round(t_infer_ms, 2),
-                    "client_ts_ms": client_ts_ms,
-                    "seq": seq,
-                }
-            except Exception as e:
-                result = {"ok": False, "error": str(e), "seq": seq}
+                    with self._lock:
+                        self._fps_window.append(t_end)
+                        self._stats["total_processed"] += 1
+                        self._stats["last_t_infer_ms"] = t_infer_ms
 
-            # Resolver el future en el event loop
+                    result = {
+                        "ok": True,
+                        "bboxes": dets,
+                        "t_infer_ms": round(t_infer_ms, 2),
+                        "client_ts_ms": client_ts_ms,
+                        "seq": seq,
+                    }
+                except Exception as e:
+                    result = {"ok": False, "error": str(e), "seq": seq}
+
+                try:
+                    loop.call_soon_threadsafe(future.set_result, result)
+                except Exception:
+                    pass
+        finally:
             try:
-                loop.call_soon_threadsafe(future.set_result, result)
+                cu_ctx.push()
+                self._unload_engine()
+                cu_ctx.pop()
             except Exception:
                 pass
-
-        # cleanup
-        try:
-            cu_ctx.detach()
-        except Exception:
-            pass
-        print("[trt-worker] stopped", flush=True)
+            try:
+                cu_ctx.detach()
+            except Exception:
+                pass
+            print("[trt-worker] stopped", flush=True)
 
 
 # ---------- Helpers GPU/health -----------------------------------------------
