@@ -75,7 +75,7 @@ body {
 
 .topbar {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto auto 1fr auto;
   align-items: center;
   gap: 18px;
   padding: 10px 16px;
@@ -605,6 +605,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, .action:focus-v
   height: calc(100vh - 52px);
   overflow: hidden;
 }
+[data-pane][hidden] { display: none !important; }
 .modelo-main {
   padding: 24px;
   overflow-y: auto;
