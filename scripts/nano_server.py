@@ -45,6 +45,8 @@ from nano_server_constants import (
     JOB_STATE_FILE, HEARTBEAT_STALE_SEC,
     ACTIVE_ENGINE_META, PREVIOUS_ENGINE, PREVIOUS_ENGINE_META, JOBS_LOGS_DIR,
 )
+from pid_utils import is_pid_alive as _is_pid_alive, check_cmdline as _check_cmdline
+from recover_job_state import recover_job_state as _rjs
 
 
 # ---------- Parche Python 3.6 (hasantavision) ---------------------------------
@@ -331,8 +333,6 @@ def read_ram_mb() -> dict:
 app = FastAPI(title="embebidos-3 nano inference server")
 worker = TRTWorker(ENGINE_PATH)
 
-from recover_job_state import recover_job_state as _rjs
-
 _recovered_job_at_startup = None
 
 
@@ -382,16 +382,6 @@ def _read_engine_meta(meta_path):
         return json.loads(meta_path.read_text())
     except Exception:
         return None
-
-
-def _is_pid_alive(pid):
-    try:
-        os.kill(int(pid), 0)
-        return True
-    except PermissionError:
-        return True
-    except (ProcessLookupError, ValueError, OSError):
-        return False
 
 
 def _read_active_job():

@@ -1,34 +1,11 @@
 """Recovery del estado del builder al arrancar el server.
 Importable desde nano_server.py o ejecutable como CLI para diagnóstico."""
 import json
-import os
 import time
 from pathlib import Path
 
 from nano_server_constants import JOB_STATE_FILE, HEARTBEAT_STALE_SEC, JOBS_LOGS_DIR
-
-
-def _is_pid_alive(pid):
-    try:
-        os.kill(int(pid), 0)
-        return True
-    except PermissionError:
-        return True
-    except (ProcessLookupError, ValueError, OSError):
-        return False
-
-
-def _check_cmdline(pid):
-    """True si /proc/<pid>/cmdline contiene 'nano_build_engine'.
-    Defensa contra PID reuse: aseguramos que el proceso es realmente el builder."""
-    cmdline_path = Path(f"/proc/{pid}/cmdline")
-    if not cmdline_path.exists():
-        return False
-    try:
-        cmdline = cmdline_path.read_bytes().replace(b"\0", b" ").decode("utf-8", errors="replace")
-        return "nano_build_engine" in cmdline
-    except Exception:
-        return False
+from pid_utils import is_pid_alive as _is_pid_alive, check_cmdline as _check_cmdline
 
 
 def _finalize_abandoned(state):
