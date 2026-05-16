@@ -128,26 +128,31 @@ class TRTWorker(threading.Thread):
         self._swap_event.set()
 
     def _load_engine(self, path: str) -> None:
-        """Carga engine + bindings desde path. Asume cu_ctx pushed."""
+        """Carga engine + bindings desde path. Asume cu_ctx pushed.
+        En caso de falla parcial, limpia con _unload_engine antes de propagar."""
         logger = trt.Logger(trt.Logger.WARNING)
         self._runtime = trt.Runtime(logger)
-        with open(path, "rb") as f:
-            self._engine = self._runtime.deserialize_cuda_engine(f.read())
-        self._trt_ctx = self._engine.create_execution_context()
-        self._bindings = []
-        for i in range(self._engine.num_bindings):
-            shape = tuple(self._engine.get_binding_shape(i))
-            dtype = trt.nptype(self._engine.get_binding_dtype(i))
-            size = int(np.prod(shape))
-            h = cuda.pagelocked_empty(size, dtype=dtype)
-            d = cuda.mem_alloc(h.nbytes)
-            self._bindings.append(int(d))
-            if self._engine.binding_is_input(i):
-                self._host_in = h; self._dev_in = d; self._in_shape = shape
-            else:
-                self._host_out = h; self._dev_out = d; self._out_shape = shape
-        self._stream = cuda.Stream()
-        print(f"[trt-worker] engine cargado desde {path}. in={self._in_shape} out={self._out_shape}", flush=True)
+        try:
+            with open(path, "rb") as f:
+                self._engine = self._runtime.deserialize_cuda_engine(f.read())
+            self._trt_ctx = self._engine.create_execution_context()
+            self._bindings = []
+            for i in range(self._engine.num_bindings):
+                shape = tuple(self._engine.get_binding_shape(i))
+                dtype = trt.nptype(self._engine.get_binding_dtype(i))
+                size = int(np.prod(shape))
+                h = cuda.pagelocked_empty(size, dtype=dtype)
+                d = cuda.mem_alloc(h.nbytes)
+                self._bindings.append(int(d))
+                if self._engine.binding_is_input(i):
+                    self._host_in = h; self._dev_in = d; self._in_shape = shape
+                else:
+                    self._host_out = h; self._dev_out = d; self._out_shape = shape
+            self._stream = cuda.Stream()
+            print(f"[trt-worker] engine cargado desde {path}. in={self._in_shape} out={self._out_shape}", flush=True)
+        except Exception:
+            self._unload_engine()
+            raise
 
     def _unload_engine(self) -> None:
         """Destruye engine + buffers. Asume cu_ctx pushed.
@@ -231,12 +236,22 @@ class TRTWorker(threading.Thread):
                         cu_ctx.push()
                         try:
                             self._unload_engine()
-                            self._load_engine(new_path)
-                            self.engine_path = new_path
+                            try:
+                                self._load_engine(new_path)
+                                self.engine_path = new_path
+                            except Exception as e:
+                                print(f"[trt-worker] FATAL: swap a {new_path} falló: {e}. Deteniendo worker.", flush=True)
+                                self._stop.set()
+                                break
                         finally:
                             cu_ctx.pop()
 
-                item = self.in_q.get()
+                # Timeout en in_q.get() para que el loop pueda chequear _swap_event
+                # periódicamente aunque no lleguen frames.
+                try:
+                    item = self.in_q.get(timeout=0.1)
+                except queue.Empty:
+                    continue
                 if item is None:
                     break
 
@@ -392,9 +407,9 @@ def _read_active_job():
     except Exception:
         return None
     pid = state.get("pid")
-    if pid and _is_pid_alive(pid):
-        return state
-    return None  # huérfano, se considera no activo
+    if not pid or not _is_pid_alive(pid) or not _check_cmdline(pid):
+        return None  # huérfano, PID reuse, o PID muerto
+    return state
 
 
 @app.get("/model/state")
