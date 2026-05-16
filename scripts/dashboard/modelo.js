@@ -121,7 +121,57 @@
   }
 
   function renderSidebar(s) {
-    // implementado en task F3
+    const side = document.querySelector('.modelo-side');
+    if (!side) return;
+    const m = s.active_engine || {};
+    const prev = s.previous_engine;
+    side.innerHTML = `
+      <section class="side-card">
+        <h3>servidor</h3>
+        <dl class="kv">
+          <dt>estado</dt><dd>activo</dd>
+          <dt>endpoint</dt><dd class="mono">${apiBase()}</dd>
+        </dl>
+      </section>
+
+      <section class="side-card">
+        <h3>HF Hub</h3>
+        <dl class="kv">
+          <dt>repo</dt><dd class="mono small">mitgar14/embebidos-3-models</dd>
+          <dt>revision activa</dt><dd class="mono">${(m.hf_revision || '—').slice(0,7)}</dd>
+        </dl>
+        <button id="btn-side-check" class="ghost">verificar ahora</button>
+      </section>
+
+      <section class="side-card">
+        <h3>acciones</h3>
+        <button id="btn-side-rebuild" class="ghost">forzar recompilación</button>
+        <button id="btn-side-rollback" class="ghost" ${prev ? '' : 'disabled'}>revertir a engine anterior</button>
+      </section>
+
+      <section class="side-card">
+        <h3>histórico</h3>
+        <p class="hint">últimos jobs (próximamente)</p>
+      </section>
+    `;
+    const sb = document.getElementById('btn-side-check');
+    if (sb) sb.onclick = () => checkUpdates();
+    const fb = document.getElementById('btn-side-rebuild');
+    if (fb) fb.onclick = () => triggerBuild(true);
+    const rb = document.getElementById('btn-side-rollback');
+    if (rb && !rb.disabled) rb.onclick = () => rollback();
+  }
+
+  async function rollback() {
+    if (!confirm('¿Revertir al engine anterior?')) return;
+    try {
+      const r = await fetch(api('/model/rollback'), { method: 'POST' });
+      const data = await r.json();
+      if (!data.ok) {
+        alert('No se pudo: ' + (data.detail?.error || 'unknown'));
+      }
+      fetchState();
+    } catch (e) { alert(e.message); }
   }
 
   function wireActions(s) {
@@ -216,5 +266,5 @@
   };
 
   // expose for sidebar (F3)
-  window._modelo = { state, api, fetchState, triggerBuild, cancelBuild, checkUpdates, startLogsStream, stopLogsStream };
+  window._modelo = { state, api, fetchState, triggerBuild, cancelBuild, checkUpdates, rollback, startLogsStream, stopLogsStream };
 })();

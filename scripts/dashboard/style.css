@@ -639,3 +639,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, .action:focus-v
 .banner-update { background: color-mix(in oklch, var(--warn) 15%, transparent); border: 1px solid var(--warn); }
 .banner-warn { background: color-mix(in oklch, var(--warn) 20%, transparent); border: 1px solid var(--warn); }
 .card-error { background: var(--bg-elev-2); border: 1px solid var(--err); color: var(--err); padding: 16px; border-radius: 6px; }
+
+/* ============ MODELO — sidebar cards ============ */
+
+.side-card { margin-bottom: 16px; padding: 12px; background: var(--bg-elev-1); border: 1px solid var(--border); border-radius: 6px; }
+.side-card h3 { font-size: var(--fs-h2); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 0 0 8px; }
+.kv { display: grid; grid-template-columns: 1fr auto; gap: 4px; font-size: var(--fs-meta); margin-bottom: 12px; }
+.kv dt { color: var(--text-muted); }
+.kv dd { text-align: right; }
+.side-card button { width: 100%; margin-bottom: 4px; padding: 6px; cursor: pointer; }
+.side-card button.ghost { background: transparent; border: 1px solid var(--border-strong); color: var(--text); border-radius: 4px; }
+.side-card button[disabled] { opacity: 0.4; cursor: not-allowed; }
+.small { font-size: 10px; }
+.hint { color: var(--text-muted); font-size: var(--fs-meta); }
