@@ -501,6 +501,33 @@ def jobs_get(job_id: str = FPath(..., pattern=r"^[A-Za-z0-9_-]{10,40}$")):
     raise HTTPException(404, {"ok": False, "error": "job_not_found"})
 
 
+@app.post("/model/rollback")
+def model_rollback():
+    if not PREVIOUS_ENGINE.exists():
+        raise HTTPException(409, {"ok": False, "error": "no_previous_engine"})
+    # swap inverso: usar nombres temp distintos para no colisionar con los meta paths reales
+    tmp_active = ACTIVE_ENGINE.parent / (ACTIVE_ENGINE.name + ".swap_tmp")
+    tmp_active_meta = ACTIVE_ENGINE_META.parent / (ACTIVE_ENGINE_META.name + ".swap_tmp")
+    if ACTIVE_ENGINE.exists():
+        ACTIVE_ENGINE.replace(tmp_active)
+        if ACTIVE_ENGINE_META.exists():
+            ACTIVE_ENGINE_META.replace(tmp_active_meta)
+    PREVIOUS_ENGINE.replace(ACTIVE_ENGINE)
+    if PREVIOUS_ENGINE_META.exists():
+        PREVIOUS_ENGINE_META.replace(ACTIVE_ENGINE_META)
+    if tmp_active.exists():
+        tmp_active.replace(PREVIOUS_ENGINE)
+        if tmp_active_meta.exists():
+            tmp_active_meta.replace(PREVIOUS_ENGINE_META)
+    # mark as degraded
+    meta = _read_engine_meta(ACTIVE_ENGINE_META) or {}
+    meta["from_fallback"] = True
+    ACTIVE_ENGINE_META.write_text(json.dumps(meta, indent=2))
+    # hot-reload worker
+    worker.request_swap(str(ACTIVE_ENGINE))
+    return {"ok": True, "phase": "rolled_back"}
+
+
 @app.post("/model/check-updates")
 def check_updates():
     current_meta = _read_engine_meta(ACTIVE_ENGINE_META)
