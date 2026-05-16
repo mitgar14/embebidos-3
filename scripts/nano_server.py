@@ -501,6 +501,21 @@ def jobs_get(job_id: str = FPath(..., pattern=r"^[A-Za-z0-9_-]{10,40}$")):
     raise HTTPException(404, {"ok": False, "error": "job_not_found"})
 
 
+@app.post("/model/check-updates")
+def check_updates():
+    current_meta = _read_engine_meta(ACTIVE_ENGINE_META)
+    current_rev = (current_meta or {}).get("hf_revision")
+    try:
+        latest_rev = hf_rest.get_head_revision()
+    except Exception as e:
+        raise HTTPException(503, {"ok": False, "error": "hf_unreachable", "detail": str(e)})
+    return {
+        "up_to_date": current_rev == latest_rev,
+        "current_revision": current_rev,
+        "latest_revision": latest_rev,
+    }
+
+
 @app.delete("/jobs/{job_id}")
 def jobs_cancel(job_id: str):
     active = _read_active_job()
