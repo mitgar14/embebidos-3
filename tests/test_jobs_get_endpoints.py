@@ -43,3 +43,25 @@ def test_jobs_get_by_id_404(tmp_path, monkeypatch):
     with TestClient(app) as c:
         r = c.get("/jobs/inexistente1")
     assert r.status_code == 404
+
+
+def test_jobs_get_invalid_id_short(tmp_path, monkeypatch):
+    _stub_worker_startup(monkeypatch)
+    import nano_server
+    monkeypatch.setattr(nano_server, "JOB_STATE_FILE", tmp_path / "nope.json")
+    monkeypatch.setattr(nano_server, "JOBS_LOGS_DIR", tmp_path / "jobs")
+    with TestClient(app) as c:
+        r = c.get("/jobs/abc")  # 3 chars, too short
+    assert r.status_code == 422
+    assert r.json().get("detail", {}).get("error") == "invalid_job_id"
+
+
+def test_jobs_get_invalid_id_chars(tmp_path, monkeypatch):
+    _stub_worker_startup(monkeypatch)
+    import nano_server
+    monkeypatch.setattr(nano_server, "JOB_STATE_FILE", tmp_path / "nope.json")
+    monkeypatch.setattr(nano_server, "JOBS_LOGS_DIR", tmp_path / "jobs")
+    with TestClient(app) as c:
+        # 12 chars but contains a forbidden ! character
+        r = c.get("/jobs/abc!def!ghi1")
+    assert r.status_code == 422

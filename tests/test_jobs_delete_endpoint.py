@@ -35,3 +35,12 @@ def test_cancel_unknown_job_404(tmp_path, monkeypatch):
     with TestClient(app) as c:
         r = c.delete("/jobs/unknown-jid01")
     assert r.status_code == 404
+
+
+def test_cancel_invalid_id_format(tmp_path, monkeypatch):
+    _stub_worker_startup(monkeypatch)
+    import nano_server
+    monkeypatch.setattr(nano_server, "JOB_STATE_FILE", tmp_path / "nope.json")
+    with TestClient(app) as c:
+        r = c.delete("/jobs/abc")
+    assert r.status_code == 422

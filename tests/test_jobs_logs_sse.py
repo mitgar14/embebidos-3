@@ -33,3 +33,12 @@ def test_jobs_logs_404(tmp_path, monkeypatch):
     with TestClient(app) as c:
         r = c.get("/jobs/nonexistent12/logs")
     assert r.status_code == 404
+
+
+def test_jobs_logs_invalid_id(tmp_path, monkeypatch):
+    _stub_worker_startup(monkeypatch)
+    import nano_server
+    monkeypatch.setattr(nano_server, "JOBS_LOGS_DIR", tmp_path / "jobs")
+    with TestClient(app) as c:
+        r = c.get("/jobs/abc/logs")
+    assert r.status_code == 422

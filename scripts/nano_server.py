@@ -26,6 +26,7 @@ import asyncio
 import json
 import os
 import queue
+import re
 import signal
 import subprocess
 import threading
@@ -39,7 +40,7 @@ import cv2
 import numpy as np
 import pycuda.driver as cuda
 import tensorrt as trt
-from fastapi import FastAPI, HTTPException, Path as FPath, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -51,6 +52,8 @@ from nano_server_constants import (
 )
 from pid_utils import is_pid_alive as _is_pid_alive, check_cmdline as _check_cmdline
 from recover_job_state import recover_job_state as _rjs
+
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,40}$")
 
 
 # ---------- Parche Python 3.6 (hasantavision) ---------------------------------
@@ -451,6 +454,7 @@ def model_state():
 # ---------- Job lifecycle endpoints (Fase E) ----------------------------------
 class BuildRequest(BaseModel):
     force: bool = False
+    workspace_mb: Optional[int] = None  # override env EMBEBIDOS3_TRTEXEC_WORKSPACE (defaults to 512)
 
 
 def _generate_job_id():
@@ -491,7 +495,9 @@ def jobs_active():
 
 
 @app.get("/jobs/{job_id}")
-def jobs_get(job_id: str = FPath(..., pattern=r"^[A-Za-z0-9_-]{10,40}$")):
+def jobs_get(job_id: str):
+    if not _JOB_ID_RE.match(job_id):
+        raise HTTPException(422, {"ok": False, "error": "invalid_job_id"})
     active = _read_active_job()
     if active and active.get("job_id") == job_id:
         return active
@@ -545,13 +551,15 @@ def check_updates():
 
 @app.delete("/jobs/{job_id}")
 def jobs_cancel(job_id: str):
+    if not _JOB_ID_RE.match(job_id):
+        raise HTTPException(422, {"ok": False, "error": "invalid_job_id"})
     active = _read_active_job()
     if not active or active.get("job_id") != job_id:
         raise HTTPException(404, {"ok": False, "error": "job_not_active"})
     try:
         subprocess.run(
             ["sudo", "/bin/systemctl", "stop", "embebidos3-builder@{}.service".format(job_id)],
-            check=True, capture_output=True, text=True, timeout=10,
+            check=True, capture_output=True, text=True, timeout=15,
         )
     except subprocess.CalledProcessError as e:
         raise HTTPException(500, {"ok": False, "error": "stop_failed", "stderr": e.stderr})
@@ -560,6 +568,8 @@ def jobs_cancel(job_id: str):
 
 @app.get("/jobs/{job_id}/logs")
 def jobs_logs(job_id: str, follow: bool = True):
+    if not _JOB_ID_RE.match(job_id):
+        raise HTTPException(422, {"ok": False, "error": "invalid_job_id"})
     log = JOBS_LOGS_DIR / "{}.log".format(job_id)
     if not log.exists():
         raise HTTPException(404, {"ok": False, "error": "log_not_found"})
