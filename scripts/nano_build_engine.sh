@@ -4,6 +4,8 @@
 # Asume sudoers granular ya configurado.
 set -euo pipefail
 
+BUILD_START_UNIX=$(date +%s)
+
 JOB_ID="${1:-}"
 if [[ -z "$JOB_ID" ]]; then
     echo "[BUILD] FATAL: falta job_id" >&2
@@ -42,7 +44,7 @@ cleanup() {
     if [[ $code -ne 0 ]]; then
         echo "[BUILD] FAILED exit=$code" >&2
         JS finalize --phase failed --exit-code "$code" 2>/dev/null || true
-        sudo systemctl is-active --quiet embebidos3-server.service \
+        systemctl is-active --quiet embebidos3-server.service \
             || sudo systemctl start embebidos3-server.service
     fi
 }
@@ -130,8 +132,9 @@ fi
 
 # 8. validate
 JS phase --name validating --pct 80
-python3 "${ROOT}/scripts/validate_engine.py" "$STAGING_ENGINE" || \
-    { echo "[BUILD] validación falló" >&2; exit 3; }
+VAL_JSON="${ROOT}/logs/jobs/${JOB_ID}.validation.json"
+python3 "${ROOT}/scripts/validate_engine.py" "$STAGING_ENGINE" > "$VAL_JSON" || \
+    { echo "[BUILD] validación falló" >&2; cat "$VAL_JSON" >&2 || true; exit 3; }
 JS phase --name validated --pct 85
 
 # 9. backup viejo a HF (si existe .previous)
@@ -160,8 +163,11 @@ if [[ -f "$ACTIVE_ENGINE" ]]; then
     [[ -f "$ACTIVE_META" ]] && mv "$ACTIVE_META" "$PREV_META" || true
 fi
 mv "$STAGING_ENGINE" "$ACTIVE_ENGINE"
+BUILD_DUR=$(( $(date +%s) - BUILD_START_UNIX ))
 python3 "${ROOT}/scripts/write_engine_meta.py" \
     "$ACTIVE_ENGINE" "$HF_REV" "$EXPECTED_SHA" "$WORKSPACE" \
+    --build-duration-s "$BUILD_DUR" \
+    --validation-json "$VAL_JSON" \
     ${HF_COMMIT_DATE:+--hf-commit-date "$HF_COMMIT_DATE"}
 JS phase --name swapped --pct 95
 
