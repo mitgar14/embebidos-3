@@ -20,7 +20,7 @@ EOF
 fi
 
 echo "[2/8] instalar wrapper sudoers-safe"
-sudo install -m 0755 "${ROOT}/scripts/embebidos3-builder-launch" /usr/local/bin/embebidos3-builder-launch
+sudo install -m 0755 "${ROOT}/scripts/builder/embebidos3-builder-launch" /usr/local/bin/embebidos3-builder-launch
 
 echo "[3/8] instalar sudoers (14 entradas)"
 sudo install -m 0440 -o root -g root /dev/stdin /etc/sudoers.d/embebidos3 <<'EOF'

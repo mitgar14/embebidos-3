@@ -35,7 +35,7 @@ exec {LOCK_FD}<>/run/embebidos3/builder.lock
 flock -n "$LOCK_FD" || { echo "[BUILD] otro builder en curso, abort" >&2; exit 1; }
 echo "$$" > /run/embebidos3/builder.lock
 
-JS() { python3 "${ROOT}/scripts/builder_state.py" "${JOB_ID}" "$@"; }
+JS() { python3 "${ROOT}/scripts/builder/builder_state.py" "${JOB_ID}" "$@"; }
 
 # V-2 fix: helper para fsync explícito (Bash no tiene fsync builtin).
 # Cubre los 3 ajustes de ronda 2: fsync del archivo + fsync del parent dir.
@@ -88,7 +88,7 @@ JS phase --name acquired_lock --pct 5
 
 # 1. download manifest
 JS phase --name downloaded_manifest --pct 8
-HF_TOKEN="$HF_TOKEN" python3 "${ROOT}/scripts/hf_rest.py" download \
+HF_TOKEN="$HF_TOKEN" python3 "${ROOT}/scripts/hub/hf_rest.py" download \
     manifests/manifest.json /tmp/manifest.json
 
 # 2. parse rev + esperado_sha
@@ -98,7 +98,7 @@ HF_COMMIT_DATE=$(python3 -c "import json; print(json.load(open('/tmp/manifest.js
 
 # 3. download onnx
 JS phase --name downloaded_onnx --pct 12
-HF_TOKEN="$HF_TOKEN" python3 "${ROOT}/scripts/hf_rest.py" download \
+HF_TOKEN="$HF_TOKEN" python3 "${ROOT}/scripts/hub/hf_rest.py" download \
     exports/best.onnx "${ROOT}/onnx/best.onnx.tmp" --revision "$HF_REV"
 
 # 4. verify SHA
@@ -152,7 +152,7 @@ timeout --kill-after=30s 40m \
         --workspace="$WORKSPACE" \
         --buildOnly \
         --verbose \
-        2>&1 | tee "$LOG_FILE" | python3 "${ROOT}/scripts/parse_trtexec_progress.py" "$JOB_ID"
+        2>&1 | tee "$LOG_FILE" | python3 "${ROOT}/scripts/builder/parse_trtexec_progress.py" "$JOB_ID"
 TRTEXEC_EXIT="${PIPESTATUS[0]}"
 set -e
 
@@ -175,7 +175,7 @@ fi
 # 8. validate
 JS phase --name validating --pct 80
 VAL_JSON="${ROOT}/logs/jobs/${JOB_ID}.validation.json"
-python3 "${ROOT}/scripts/validate_engine.py" "$STAGING_ENGINE" > "$VAL_JSON" || \
+python3 "${ROOT}/scripts/builder/validate_engine.py" "$STAGING_ENGINE" > "$VAL_JSON" || \
     { echo "[BUILD] validación falló" >&2; cat "$VAL_JSON" >&2 || true; exit 3; }
 JS phase --name validated --pct 85
 
@@ -205,10 +205,10 @@ if [[ -f "$PREV_ENGINE" ]]; then
         --timestamp "$TIMESTAMP"
     )
     [[ -f "$ARCHIVED_META" ]] && MANIFEST_ARGS+=(--source-meta "$ARCHIVED_META")
-    python3 "${ROOT}/scripts/write_archive_manifest.py" "${MANIFEST_ARGS[@]}" \
+    python3 "${ROOT}/scripts/builder/write_archive_manifest.py" "${MANIFEST_ARGS[@]}" \
         || echo "[BUILD] WARN: write_archive_manifest falló, archive local conservado en ${ARCHIVE_DIR}" >&2
     if [[ -f "${ARCHIVE_DIR}/manifest.json" ]]; then
-        HF_TOKEN="$HF_TOKEN" python3 "${ROOT}/scripts/hf_rest.py" upload \
+        HF_TOKEN="$HF_TOKEN" python3 "${ROOT}/scripts/hub/hf_rest.py" upload \
             "${ARCHIVE_DIR}/manifest.json" \
             "engines-archive/${TIMESTAMP}__${OLD_SHA}/manifest.json" \
             --message "embebidos3 archive manifest ${OLD_SHA}" \
@@ -236,7 +236,7 @@ rm -f "$ACTIVE_READY"                                     # borrar centinela mie
 mv "$STAGING_ENGINE" "$ACTIVE_ENGINE"
 fsync_path "$ACTIVE_ENGINE"                               # ajuste #1: fsync engine promovido
 BUILD_DUR=$(( $(date +%s) - BUILD_START_UNIX ))
-python3 "${ROOT}/scripts/write_engine_meta.py" \
+python3 "${ROOT}/scripts/builder/write_engine_meta.py" \
     "$ACTIVE_ENGINE" "$HF_REV" "$EXPECTED_SHA" "$WORKSPACE" \
     --build-duration-s "$BUILD_DUR" \
     --validation-json "$VAL_JSON" \

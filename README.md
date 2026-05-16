@@ -68,7 +68,13 @@ embebidos-3/
 │   └── train_track_b_yolov8.ipynb                     ← 29 celdas, kernel `trackb`, headless Vast.ai
 │
 └── scripts/
-    └── bootstrap.sh                                   ← provisiona host Vast.ai (idempotente)
+    ├── server/                                       ← FastAPI + WS, recovery, constantes
+    ├── builder/                                      ← pipeline TRT (download, trtexec, validate, swap)
+    ├── hub/                                          ← HF REST (download/upload, raw + LFS)
+    ├── install/                                      ← installers (systemd units, inference deps)
+    ├── training/
+    │   └── bootstrap.sh                              ← provisiona host Vast.ai (idempotente)
+    └── dashboard/                                    ← UI estática (HTML/JS) servida en local
 ```
 
 ---
@@ -106,7 +112,7 @@ Sin GPU NVIDIA local, el notebook aborta intencionalmente en la celda 8 (assert 
 vastai create instance <OFFER_ID> --image vastai/base-image:cuda-12.4.1-cudnn-devel-ubuntu22.04-py310 ...
 
 # 2. Subir scripts + notebook
-rsync -avz scripts/bootstrap.sh notebooks/train_track_b_yolov8.ipynb root@<INSTANCE_IP>:/workspace/
+rsync -avz scripts/training/bootstrap.sh notebooks/train_track_b_yolov8.ipynb root@<INSTANCE_IP>:/workspace/
 
 # 3. En la instancia: ejecutar bootstrap + lanzar training en tmux
 ssh root@<INSTANCE_IP>
@@ -156,7 +162,7 @@ trtexec --onnx=/home/jetson/models/best.onnx \
 
 A partir del 2026-05-16 todo el ciclo de vida del engine se opera desde el dashboard web. Reemplaza el flujo manual `scp + trtexec` de §5.3.
 
-**Componentes en el Nano** (instalados por `scripts/nano_install_systemd.sh`):
+**Componentes en el Nano** (instalados por `scripts/install/nano_install_systemd.sh`):
 
 - `embebidos3-server.service` — FastAPI/WS (uvicorn foreground, Type=simple, Restart=on-failure). Expone WS de inferencia + endpoints de gestión.
 - `embebidos3-builder@<jobid>.service` — templated oneshot que ejecuta `nano_build_engine.sh` (12 fases: lock → download manifest → download ONNX → stop server → prep Nano (swap 8GB, lightdm off) → trtexec → validate → swap atómico → restore → cleanup). Tarda 15-40 min en Maxwell sm_53.

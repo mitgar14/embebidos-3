@@ -37,6 +37,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).parent.parent / "hub"))
+
 import cv2
 import numpy as np
 import pycuda.driver as cuda

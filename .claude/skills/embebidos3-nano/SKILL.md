@@ -91,12 +91,29 @@ Sin meta → estado `no_model` aunque haya binario en disco. Para registrar un b
 ```
 /home/jetson/embebidos-3/
 ├── scripts/
-│   ├── nano_server.py              FastAPI/WS server (uvicorn foreground via systemd)
-│   ├── nano_build_engine.sh        12 fases (download → trtexec → validate → swap)
-│   ├── nano_start_server.sh        exec uvicorn (sin nohup, systemd Type=simple)
-│   ├── nano_install_systemd.sh     idempotente: units + sudoers + daemon-reload
-│   ├── hf_rest.py                  cliente HF (sin huggingface_hub SDK, compat Py3.6)
-│   └── ...
+│   ├── server/
+│   │   ├── nano_server.py          FastAPI/WS server (uvicorn foreground via systemd)
+│   │   ├── nano_start_server.sh    exec uvicorn (sin nohup, systemd Type=simple)
+│   │   ├── nano_server_constants.py
+│   │   ├── pid_utils.py
+│   │   └── recover_job_state.py
+│   ├── builder/
+│   │   ├── nano_build_engine.sh    12 fases (download → trtexec → validate → swap)
+│   │   ├── embebidos3-builder-launch wrapper sudoers-safe
+│   │   ├── builder_state.py        helper para escribir job.json
+│   │   ├── parse_trtexec_progress.py
+│   │   ├── validate_engine.py      importa nano_correctness
+│   │   ├── nano_correctness.py     letterbox + NMS V0 sm_53
+│   │   ├── write_archive_manifest.py
+│   │   └── write_engine_meta.py
+│   ├── hub/
+│   │   └── hf_rest.py              cliente HF (sin huggingface_hub SDK, compat Py3.6)
+│   ├── install/
+│   │   ├── nano_install_systemd.sh idempotente: units + sudoers + daemon-reload
+│   │   └── nano_install_inference.sh
+│   ├── training/
+│   │   └── bootstrap.sh            provisioning Vast.ai (Track B)
+│   └── dashboard/                  UI estática consumida en localhost
 ├── engines/
 │   ├── best_fp16.engine            engine TRT activo
 │   ├── best_fp16.engine.meta.json  tracking del engine activo
@@ -155,19 +172,6 @@ jetson ALL=(root) NOPASSWD: /usr/bin/tee /proc/sys/vm/drop_caches
 ```
 
 **Verificá los paths de binarios con `which` ANTES de añadir reglas** — varían entre distros. Caso real: `fallocate` está en `/usr/bin/`, no en `/sbin/` (la convención GNU coreutils).
-
-## Tooling de validación
-
-Tests (host con uv): `uv run pytest tests/ -q` — usa `tests/conftest.py` para mockear pycuda/tensorrt.
-
-Smoke visual (Playwright headless en host):
-```bash
-# El dashboard local lo serve scripts/launch_demo.py en :8001
-uv run --with requests python scripts/launch_demo.py --no-browser
-# Smoke contra los 4 escenarios check-updates en /tmp/pw-smoke/
-```
-
-Para depurar el dashboard sin abrir browser, usar Playwright para tomar screenshots y leerlos con la tool `Read` (multimodal).
 
 ## Build de engine (15-40 min)
 
