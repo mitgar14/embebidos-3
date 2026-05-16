@@ -652,3 +652,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, .action:focus-v
 .side-card button[disabled] { opacity: 0.4; cursor: not-allowed; }
 .small { font-size: 10px; }
 .hint { color: var(--text-muted); font-size: var(--fs-meta); }
+
+/* ============ LIVE BANNER (cross-tab notice) ============ */
+
+.live-banner {
+  background: color-mix(in oklch, var(--warn) 20%, transparent);
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  font-size: var(--fs-meta);
+  text-align: center;
+}
+.live-banner a { color: var(--accent); text-decoration: underline; }

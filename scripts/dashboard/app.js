@@ -76,6 +76,36 @@
   state.captureCtx = state.captureCanvas.getContext("2d");
   state.overlayCtx = els.overlay.getContext("2d");
 
+  // ---------- Monitoring del estado del modelo (cross-tab) -----------------
+  async function pollModelStateLight() {
+    try {
+      const wsInput = document.getElementById('ws-url');
+      if (!wsInput || !wsInput.value) return;
+      const httpUrl = wsInput.value.trim().replace(/^ws/, 'http').replace(/\/ws$/, '');
+      const r = await fetch(httpUrl + '/model/state');
+      if (!r.ok) return;
+      const data = await r.json();
+      const livePane = document.querySelector('[data-pane="live"]');
+      if (!livePane) return;
+      const stage = livePane.querySelector('.stage');
+      if (!stage) return;
+      const banner = document.getElementById('live-banner');
+      if (data.state === 'building' && !banner) {
+        const b = document.createElement('div');
+        b.id = 'live-banner';
+        b.className = 'live-banner';
+        b.innerHTML = 'modelo no disponible — build en curso · <a href="#modelo">ver pestaña modelo</a>';
+        stage.prepend(b);
+      } else if (data.state !== 'building' && banner) {
+        banner.remove();
+      }
+    } catch (e) {
+      // silencio: el server puede no estar reachable, no interrumpir
+    }
+  }
+
+  setInterval(pollModelStateLight, 5000);
+
   // ---------- WebSocket ------------------------------------------------------
   function connect() {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) return;
