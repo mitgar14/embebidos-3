@@ -23,6 +23,7 @@ Run:
   /home/jetson/.local/bin/uvicorn nano_server:app --host 0.0.0.0 --port 8000
 """
 import asyncio
+import hashlib
 import json
 import os
 import queue
@@ -429,7 +430,11 @@ def _read_active_job():
 
 @app.get("/model/state")
 def model_state():
-    """Devuelve el estado del modelo: no_model | ready | building | degraded."""
+    """Devuelve el estado del modelo: no_model | ready | building | degraded.
+
+    Si state=no_model y existe el binario en disco (engine huérfano sin meta),
+    `engine_binary_present` permite a la UI ofrecer adopción retroactiva.
+    """
     active_meta = _read_engine_meta(ACTIVE_ENGINE_META)
     previous_meta = _read_engine_meta(PREVIOUS_ENGINE_META)
     active_job = _read_active_job()
@@ -440,6 +445,7 @@ def model_state():
             "active_engine": active_meta,
             "previous_engine": previous_meta,
             "active_job": active_job,
+            "engine_binary_present": ACTIVE_ENGINE.exists(),
         }
 
     if ACTIVE_ENGINE.exists() and active_meta:
@@ -449,6 +455,7 @@ def model_state():
             "active_engine": active_meta,
             "previous_engine": previous_meta,
             "active_job": None,
+            "engine_binary_present": True,
         }
 
     return {
@@ -456,6 +463,7 @@ def model_state():
         "active_engine": None,
         "previous_engine": previous_meta,
         "active_job": None,
+        "engine_binary_present": ACTIVE_ENGINE.exists(),
     }
 
 
@@ -568,6 +576,63 @@ def check_updates():
         "current_onnx_sha256": current_onnx,
         "latest_onnx_sha256": latest_onnx,
     }
+
+
+def _sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    """SHA256 hex streaming de un archivo."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+@app.post("/model/adopt")
+def model_adopt():
+    """Registra el binario engine actual como si correspondiera a la HEAD de HF.
+
+    Útil cuando hay un engine huérfano (sin meta) compilado fuera del sistema de
+    tracking. Hashea el .engine local, consulta HF (head revision + LFS sha del
+    ONNX) y escribe un meta retroactivo marcado con adopted=True.
+
+    No descarga el ONNX. NO recompila el engine. El usuario asume que el binario
+    presente corresponde a la versión actual del repo HF.
+    """
+    if not ACTIVE_ENGINE.exists():
+        raise HTTPException(404, {"ok": False, "error": "no_engine_binary"})
+    if ACTIVE_ENGINE_META.exists():
+        raise HTTPException(409, {"ok": False, "error": "meta_already_exists"})
+
+    engine_sha = _sha256_file(ACTIVE_ENGINE)
+    try:
+        rev = hf_rest.get_head_revision()
+        onnx_sha = hf_rest.get_file_lfs_sha256("exports/best.onnx", revision=rev)
+        info = hf_rest.repo_info(revision=rev)
+    except Exception as e:
+        raise HTTPException(503, {"ok": False, "error": "hf_unreachable",
+                                  "detail": str(e)})
+    if not onnx_sha:
+        raise HTTPException(500, {"ok": False, "error": "no_onnx_lfs_oid"})
+
+    meta = {
+        "hf_revision": rev,
+        "hf_commit_date": info.get("lastModified"),
+        "onnx_sha256": onnx_sha,
+        "engine_sha256": engine_sha,
+        "build_completed_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "build_duration_s": 0,
+        "trtexec_args": [],
+        "validation": {"note": "adopted: engine pre-existente sin tracking original"},
+        "adopted": True,
+    }
+    tmp = ACTIVE_ENGINE_META.with_suffix(ACTIVE_ENGINE_META.suffix + ".tmp")
+    tmp.write_text(json.dumps(meta, indent=2))
+    tmp.replace(ACTIVE_ENGINE_META)
+
+    # hot-reload del worker para que tome el engine "oficialmente"
+    worker.request_swap(str(ACTIVE_ENGINE))
+
+    return {"ok": True, "meta": meta}
 
 
 @app.delete("/jobs/{job_id}")
