@@ -83,3 +83,35 @@ def upload_file_inline(local_path: Path, remote_path: str,
                            "Ver fallback con git-lfs en docs.")
     r.raise_for_status()
     return r.json()
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="cliente REST HF Hub minimal")
+    # Python 3.6 argparse no soporta required=True en add_subparsers (PEP 3.7+),
+    # se valida manualmente tras parse_args.
+    sub = parser.add_subparsers(dest="cmd")
+
+    p_dl = sub.add_parser("download")
+    p_dl.add_argument("filename", help="path en el repo, ej. exports/best.onnx")
+    p_dl.add_argument("local_path", help="destino local")
+    p_dl.add_argument("--revision", default="main")
+
+    p_up = sub.add_parser("upload")
+    p_up.add_argument("local_path", help="archivo local a subir")
+    p_up.add_argument("remote_path", help="path en el repo")
+    p_up.add_argument("--message", default="embebidos3 backup")
+
+    p_info = sub.add_parser("head-revision")
+
+    args = parser.parse_args()
+    if not args.cmd:
+        parser.error("subcommand required: download | upload | head-revision")
+    if args.cmd == "download":
+        download(args.filename, Path(args.local_path), revision=args.revision)
+        print(f"OK: {args.filename} -> {args.local_path}")
+    elif args.cmd == "upload":
+        result = upload_file_inline(Path(args.local_path), args.remote_path, args.message)
+        print(f"OK: {result.get('commitUrl', 'commit OK')}")
+    elif args.cmd == "head-revision":
+        print(get_head_revision())
