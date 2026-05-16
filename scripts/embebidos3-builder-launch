@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Lanzador validado de instancias templated del builder.
+# Invocado como: sudo embebidos3-builder-launch <jobid>
+set -euo pipefail
+
+JOBID="${1:-}"
+if [[ ! "$JOBID" =~ ^[A-Za-z0-9_-]{10,40}$ ]]; then
+    echo "JOBID inválido: '$JOBID' (esperado: 10-40 chars [A-Za-z0-9_-])" >&2
+    exit 1
+fi
+exec /bin/systemctl start "embebidos3-builder@${JOBID}.service"
