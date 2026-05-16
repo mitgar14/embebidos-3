@@ -40,7 +40,7 @@ import numpy as np
 import pycuda.driver as cuda
 import tensorrt as trt
 from fastapi import FastAPI, HTTPException, Path as FPath, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 import hf_rest
@@ -499,6 +499,37 @@ def jobs_get(job_id: str = FPath(..., pattern=r"^[A-Za-z0-9_-]{10,40}$")):
     if final.exists():
         return json.loads(final.read_text())
     raise HTTPException(404, {"ok": False, "error": "job_not_found"})
+
+
+@app.get("/jobs/{job_id}/logs")
+def jobs_logs(job_id: str, follow: bool = True):
+    log = JOBS_LOGS_DIR / "{}.log".format(job_id)
+    if not log.exists():
+        raise HTTPException(404, {"ok": False, "error": "log_not_found"})
+
+    def gen():
+        with open(log, "r") as f:
+            for line in f:
+                yield "event: log\ndata: {}\n\n".format(json.dumps({"line": line.rstrip()}))
+            if not follow:
+                yield "event: done\ndata: {}\n\n".format(json.dumps({"phase": "eof"}))
+                return
+            while True:
+                where = f.tell()
+                line = f.readline()
+                if not line:
+                    final = JOBS_LOGS_DIR / "{}.json".format(job_id)
+                    if final.exists():
+                        result = json.loads(final.read_text())
+                        yield "event: done\ndata: {}\n\n".format(json.dumps(result))
+                        return
+                    time.sleep(0.25)
+                    f.seek(where)
+                else:
+                    yield "event: log\ndata: {}\n\n".format(
+                        json.dumps({"line": line.rstrip(), "ts": time.time()}))
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @app.websocket("/ws")
