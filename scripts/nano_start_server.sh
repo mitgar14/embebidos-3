@@ -14,7 +14,5 @@ export LANG=C.UTF-8
 export PYTHONIOENCODING=utf-8
 export ENGINE_PATH="${ENGINE}"
 
-cd "${ROOT}/scripts"
-
 # Foreground: NO nohup, NO `&`. systemd captura stdout/stderr y maneja PID.
 exec python3 -c "import uvicorn; uvicorn.run('nano_server:app', host='0.0.0.0', port=8000, workers=1, log_level='info')"

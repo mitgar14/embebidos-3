@@ -53,8 +53,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable embebidos3-server.service
 sudo systemd-tmpfiles --create /etc/tmpfiles.d/embebidos3-logs.tmpfiles.conf
 
-echo "[7/8] migrar server actual (si está corriendo con nohup)"
-if pgrep -f 'nano_server:app' > /dev/null; then
+echo "[7/8] migrar server actual (si está corriendo con nohup, no systemd)"
+if ! systemctl is-active --quiet embebidos3-server.service \
+   && pgrep -f 'nano_server:app' > /dev/null; then
     echo "    matando server nohup..."
     pkill -f 'nano_server:app' || true
     sleep 2
