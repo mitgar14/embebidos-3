@@ -1,1 +1,2 @@
 - Tenés acceso mediante SSH a la Jetson Nano: dentro del contexto de este proyecto tenés acceso a ella.
+- Este es un proyecto universitario: busca construir un MVP. Las implementaciones que veas que son "complicadas" realmente están orientadas a ofrecer el funcionamiento más fluido durante la sustentación del proyecto. No complicarte con lograr siempre la mayor realiabilidad, pero procurar escoger siempre el mejor camino (sin importar si es lento).

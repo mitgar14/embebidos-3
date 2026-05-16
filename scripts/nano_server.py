@@ -41,7 +41,7 @@ import cv2
 import numpy as np
 import pycuda.driver as cuda
 import tensorrt as trt
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
@@ -53,7 +53,7 @@ from nano_server_constants import (
     ACTIVE_ENGINE_META, PREVIOUS_ENGINE, PREVIOUS_ENGINE_META, JOBS_LOGS_DIR,
 )
 from pid_utils import is_pid_alive as _is_pid_alive, check_cmdline as _check_cmdline
-from recover_job_state import recover_job_state as _rjs
+from recover_job_state import recover_job_state as _rjs, reconcile_engine_state as _res
 
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,40}$")
 
@@ -83,6 +83,8 @@ class TRTWorker(threading.Thread):
         self._stats = {"total_processed": 0, "last_t_infer_ms": 0.0}
         self._swap_path: Optional[str] = None
         self._swap_event = threading.Event()
+        self._release_pending = False  # si True, el próximo swap_event libera sin recargar
+        self._engine_loaded = threading.Event()
         # Engine state as instance attrs (not locals in run()) so _unload can destroy them.
         self._runtime = None
         self._engine = None
@@ -134,7 +136,21 @@ class TRTWorker(threading.Thread):
         """Pide hot-swap a un engine nuevo. Llamado desde el handler HTTP."""
         with self._lock:
             self._swap_path = new_path
+            self._release_pending = False
         self._swap_event.set()
+
+    def request_release(self) -> None:
+        """Libera el engine (RAM + GPU buffers) sin matar el thread ni el server.
+        Usado por el builder antes de trtexec para liberar ~250-400 MB. El CUDA
+        context se mantiene pushed/popped por este thread; sólo se destruyen
+        engine + bindings + stream."""
+        with self._lock:
+            self._swap_path = None
+            self._release_pending = True
+        self._swap_event.set()
+
+    def is_engine_loaded(self) -> bool:
+        return self._engine_loaded.is_set()
 
     def _load_engine(self, path: str) -> None:
         """Carga engine + bindings desde path. Asume cu_ctx pushed.
@@ -158,6 +174,7 @@ class TRTWorker(threading.Thread):
                 else:
                     self._host_out = h; self._dev_out = d; self._out_shape = shape
             self._stream = cuda.Stream()
+            self._engine_loaded.set()
             print(f"[trt-worker] engine cargado desde {path}. in={self._in_shape} out={self._out_shape}", flush=True)
         except Exception:
             self._unload_engine()
@@ -166,6 +183,7 @@ class TRTWorker(threading.Thread):
     def _unload_engine(self) -> None:
         """Destruye engine + buffers. Asume cu_ctx pushed.
         Orden de destrucción (mnemon 881e5569): stream -> outputs -> inputs -> ctx -> engine -> runtime."""
+        self._engine_loaded.clear()
         self._stream = None
         self._dev_out = None
         self._host_out = None
@@ -231,17 +249,36 @@ class TRTWorker(threading.Thread):
         cu_ctx = cuda.Device(0).make_context()
         try:
             cu_ctx.push()
-            self._load_engine(str(self.engine_path))
+            try:
+                self._load_engine(str(self.engine_path))
+            except Exception as e:
+                # Engine puede no existir si arrancamos durante un build o
+                # tras un crash sin engine válido. Arrancamos en standby —
+                # el server expone /model/state correctamente y el dashboard
+                # puede gatillar build/adopt.
+                print(f"[trt-worker] arrancando en standby (no engine): {e}", flush=True)
             cu_ctx.pop()
             self._ready.set()
 
             while not self._stop.is_set():
-                # ¿hay swap pendiente?
+                # ¿hay swap o release pendiente?
                 if self._swap_event.is_set():
                     self._swap_event.clear()
                     with self._lock:
                         new_path = self._swap_path
-                    if new_path:
+                        release_pending = self._release_pending
+                        if release_pending:
+                            self._release_pending = False
+                    if release_pending and not new_path:
+                        # Release sin reload: libera RAM para que trtexec corra
+                        # con el server vivo. CUDA context se mantiene.
+                        cu_ctx.push()
+                        try:
+                            self._unload_engine()
+                        finally:
+                            cu_ctx.pop()
+                        print("[trt-worker] modo standby (sin engine)", flush=True)
+                    elif new_path:
                         cu_ctx.push()
                         try:
                             self._unload_engine()
@@ -249,9 +286,8 @@ class TRTWorker(threading.Thread):
                                 self._load_engine(new_path)
                                 self.engine_path = new_path
                             except Exception as e:
-                                print(f"[trt-worker] FATAL: swap a {new_path} falló: {e}. Deteniendo worker.", flush=True)
-                                self._stop.set()
-                                break
+                                print(f"[trt-worker] swap a {new_path} falló: {e}. Modo standby; reintentar con reload-engine.", flush=True)
+                                # NO matamos el worker; queda en standby esperando otro request_swap
                         finally:
                             cu_ctx.pop()
 
@@ -265,6 +301,18 @@ class TRTWorker(threading.Thread):
                     break
 
                 jpeg_bytes, client_ts_ms, seq, loop, future = item
+
+                # Engine descargado (build en curso o swap pendiente): respondemos
+                # rápido sin tocar GPU para que el WS no acumule frames colgados.
+                if not self._engine_loaded.is_set():
+                    err_result = {"ok": False, "error": "engine_unavailable",
+                                  "reason": "building_or_standby", "seq": seq}
+                    try:
+                        loop.call_soon_threadsafe(future.set_result, err_result)
+                    except Exception:
+                        pass
+                    continue
+
                 t_start = time.perf_counter()
                 try:
                     arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
@@ -370,6 +418,14 @@ _recovered_job_at_startup = None
 @app.on_event("startup")
 def _startup():
     global _recovered_job_at_startup
+    # V-2 recovery (fix 2026-05-16): reconcile filesystem ANTES de cargar el engine.
+    # Si el builder murió por SIGKILL entre los dos mv del swap, el active_engine
+    # quedó vacío con un .previous válido. Auto-promueve el .previous para que el
+    # worker tenga engine al cargar. Ver investigaciones/2026-05-16-atomic-swap-engine-recovery-mvp.md
+    _engine_recon = _res()
+    if _engine_recon.get("action") != "no_op":
+        print(f"[server] engine state recon: action={_engine_recon.get('action')} "
+              f"reason={_engine_recon.get('reason')}", flush=True)
     worker.start()
     if not worker.wait_ready(60):
         raise RuntimeError("TRT worker no ready en 60s")
@@ -489,15 +545,30 @@ def model_build(req: BuildRequest = BuildRequest()):
                     "active_job_id": active.get("job_id")},
         )
     job_id = _generate_job_id()
+    # El wrapper invoca `systemctl start --no-block ...` que retorna en <1s.
+    # Timeout defensivo de 5s cubre cargas extremas del Nano (swap thrash).
+    # Capturamos TODO: CalledProcessError (exit!=0), TimeoutExpired (>5s),
+    # OSError (sudo o binario faltante). Sin esto, TimeoutExpired bubble-up
+    # producia un 500 generico que el cliente interpretaba como launch_failed
+    # falso (el job SI arrancaba, pero el HTTP devolvia error).
     try:
         subprocess.run(
             ["sudo", "/usr/local/bin/embebidos3-builder-launch", job_id],
             check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            universal_newlines=True, timeout=10,
+            universal_newlines=True, timeout=5,
         )
     except subprocess.CalledProcessError as e:
         raise HTTPException(500, {"ok": False, "error": "launch_failed",
-                                  "stderr": e.stderr})
+                                  "reason": "exit_nonzero",
+                                  "stderr": (e.stderr or "")[:500]})
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, {"ok": False, "error": "launch_timeout",
+                                  "reason": "systemctl_start_exceeded_5s",
+                                  "hint": "Verificar si el job ya inicio via GET /jobs/active"})
+    except OSError as e:
+        raise HTTPException(500, {"ok": False, "error": "launch_failed",
+                                  "reason": "subprocess_error",
+                                  "stderr": str(e)[:500]})
     return {
         "ok": True,
         "job_id": job_id,
@@ -522,6 +593,51 @@ def jobs_get(job_id: str):
     if final.exists():
         return json.loads(final.read_text())
     raise HTTPException(404, {"ok": False, "error": "job_not_found"})
+
+
+def _require_localhost(request: Request) -> None:
+    """Endpoints _internal/* sólo aceptan llamadas desde 127.0.0.1.
+    Usados por el builder local para release/reload del engine sin matar
+    el server. Evita exposición accidental vía Tailscale o LAN."""
+    host = (request.client.host if request.client else "") or ""
+    if host not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(403, {"ok": False, "error": "forbidden_non_local",
+                                  "client": host})
+
+
+@app.post("/model/_internal/release-engine")
+def model_release_engine(request: Request):
+    """Libera el engine del worker (RAM + GPU buffers) para que trtexec corra
+    con el server vivo. Idempotente: si ya está liberado, OK. Llamado por el
+    builder antes de trtexec."""
+    _require_localhost(request)
+    if not worker.is_engine_loaded():
+        return {"ok": True, "phase": "already_released"}
+    worker.request_release()
+    # Esperar hasta 5s a que el worker procese el release_event
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if not worker.is_engine_loaded():
+            return {"ok": True, "phase": "released"}
+        time.sleep(0.1)
+    raise HTTPException(504, {"ok": False, "error": "release_timeout"})
+
+
+@app.post("/model/_internal/reload-engine")
+def model_reload_engine(request: Request):
+    """Recarga el engine activo desde disco. Llamado por el builder tras el
+    swap atómico. El worker debe estar en standby (ya descargado)."""
+    _require_localhost(request)
+    if not ACTIVE_ENGINE.exists():
+        raise HTTPException(404, {"ok": False, "error": "no_engine_binary"})
+    worker.request_swap(str(ACTIVE_ENGINE))
+    # Esperar hasta 30s a que el worker cargue (typical: <2s)
+    deadline = time.time() + 30.0
+    while time.time() < deadline:
+        if worker.is_engine_loaded():
+            return {"ok": True, "phase": "reloaded"}
+        time.sleep(0.1)
+    raise HTTPException(504, {"ok": False, "error": "reload_timeout"})
 
 
 @app.post("/model/rollback")
@@ -655,7 +771,17 @@ def jobs_cancel(job_id: str):
 
 
 @app.get("/jobs/{job_id}/logs")
-def jobs_logs(job_id: str, follow: bool = True):
+def jobs_logs(job_id: str, follow: bool = True, tail: int = 0):
+    """Stream SSE de logs del build.
+
+    tail=0 (default): NO se manda nada del pasado. seek(EOF) y stream sólo de
+      líneas nuevas a partir de la conexión. Esto da experiencia "en vivo" pura
+      sin que un reconnect re-inunde al cliente con cientos de KB del archivo
+      ya recorrido.
+    tail=N>0: incluye las últimas N líneas como contexto inicial, luego tail-follow.
+
+    Param follow=false hace que la respuesta termine al EOF (útil para tests).
+    """
     if not _JOB_ID_RE.match(job_id):
         raise HTTPException(422, {"ok": False, "error": "invalid_job_id"})
     log = JOBS_LOGS_DIR / "{}.log".format(job_id)
@@ -664,8 +790,18 @@ def jobs_logs(job_id: str, follow: bool = True):
 
     def gen():
         with open(log, "r") as f:
-            for line in f:
-                yield "event: log\ndata: {}\n\n".format(json.dumps({"line": line.rstrip()}))
+            if tail > 0:
+                # Leer últimas N líneas como bootstrap. O(file_size) pero N pequeño
+                # y archivos típicos <20 MB; aceptable. Para producción con logs
+                # enormes, optimizar con seek desde el final.
+                lines = f.readlines()
+                for line in lines[-tail:]:
+                    yield "event: log\ndata: {}\n\n".format(json.dumps({"line": line.rstrip()}))
+                # f ya está en EOF tras readlines()
+            else:
+                # Modo "en vivo puro": saltar todo lo escrito hasta ahora.
+                f.seek(0, 2)  # SEEK_END
+
             if not follow:
                 yield "event: done\ndata: {}\n\n".format(json.dumps({"phase": "eof"}))
                 return

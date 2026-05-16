@@ -74,29 +74,45 @@ Estimación: ~1 h de script Python en el laptop con `subprocess` a `gh release c
 
 ---
 
-## 🔴 V-2 · Recovery no cubre swap interrumpido a mitad
+## ✅ V-2 · Recovery no cubre swap interrumpido a mitad
 
-**Síntoma:** si el builder muere por SIGKILL (OOM, system shutdown) **entre los dos `mv` del paso 10 (swap atómico)**, queda sin engine activo en disco. El estado va de `ACTIVE_ENGINE` poblado a `.previous` poblado pero `ACTIVE_ENGINE` vacío antes del segundo `mv` que pondría el `.staging` como activo.
+**Estado: RESUELTO 2026-05-16** mediante estrategia **A++ (centinela `.ready` + `reconcile_engine_state()` + fsync explícitos)**. Patrón canónico industria (Cog `.cog/ready` + OSTree `loader.tmp`). Investigación sustentadora: `investigaciones/2026-05-16-atomic-swap-engine-recovery-mvp.md` (2 rondas, 60+ fuentes). Validación empírica: `.planning/spikes/00{1,2,3}-*/` (17/17 asserts PASS en el Nano real).
 
-**Código vulnerable** (`scripts/nano_build_engine.sh:172-178`):
+**Cambios del fix (5 archivos):**
+- `scripts/nano_server_constants.py`: agregadas constantes `ACTIVE_ENGINE_READY` y `PREVIOUS_ENGINE_READY` (paths del centinela).
+- `scripts/recover_job_state.py`: nueva función `reconcile_engine_state()` con los 3 ajustes obligatorios de ronda 2 (fsync(parent_dir), threat model SIGKILL/OOM, validar `prev_engine.is_file()`).
+- `scripts/nano_server.py::_startup`: llama `_res()` ANTES de `worker.start()` para garantizar engine válido al cargar.
+- `scripts/nano_build_engine.sh`: fase 10 (swap atómico) reescrita con helper `fsync_path()` + 5 fsync explícitos (staging, previous dir, active, tmp ready, parent dir final). Centinela `.ready` escrito como ÚLTIMA operación.
+- `agent-docs/VACIOS.md`: este bloque.
+
+**Síntoma original (preservado para auditoría):** si el builder moría por SIGKILL (OOM, system shutdown) entre los dos `mv` del paso 10 (swap atómico), quedaba sin engine activo en disco. El estado iba de `ACTIVE_ENGINE` poblado a `.previous` poblado pero `ACTIVE_ENGINE` vacío antes del segundo `mv` que pondría el `.staging` como activo.
+
+**Código vulnerable original** (`scripts/nano_build_engine.sh:191-197` pre-fix):
 ```bash
 rm -f "$PREV_ENGINE" "$PREV_META"
 if [[ -f "$ACTIVE_ENGINE" ]]; then
     mv "$ACTIVE_ENGINE" "$PREV_ENGINE"     # ← punto 1
     [[ -f "$ACTIVE_META" ]] && mv "$ACTIVE_META" "$PREV_META" || true
 fi
-mv "$STAGING_ENGINE" "$ACTIVE_ENGINE"      # ← punto 2 (no llega)
+mv "$STAGING_ENGINE" "$ACTIVE_ENGINE"      # ← punto 2 (no llegaba)
 ```
 
-Si muere entre `← punto 1` y `← punto 2`, no hay `best_fp16.engine`. El server al arrancar ve `engine_binary_present=false` y va a estado `no_model`, pero hay un `.previous` válido sin usar.
+**Causa raíz confirmada:** dos `mv` consecutivos no son atómicos ENTRE SÍ — POSIX garantiza atomicidad de cada `rename(2)` para el observador, pero no entre llamadas. Adicionalmente, `rename(2)` en ext4 con `auto_da_alloc` no espera el flush de bloques (ref: Ferrite ASPLOS 2016, LevelDB #195, FastForward #386), por lo que `fsync` explícito es necesario antes/después del `mv` para durabilidad bajo SIGKILL.
 
-**Recovery actual no lo detecta**: solo limpia `active_job.json`, no inspecciona la coherencia entre staging/active/previous.
+**Por qué A++ y no las alternativas evaluadas** (ronda 1 + 2):
+- **B (symlink swap)**: requiere cambiar el paradigma de paths del proyecto (worker, dashboard, server endpoints, todos los consumidores deben seguir symlinks). Mayor superficie de regresión sin ganancia técnica significativa.
+- **C (`renameat2 RENAME_EXCHANGE`)**: NADIE en ML serving production o embedded A/B lo usa (verificado: Triton, TF Serving, vLLM, KServe, Cog, Ray Serve, OSTree, Mender, swupdate). Requiere instalar CFFI Py3.6 (fricción real en JetPack 4.6.1). No resuelve nada que A++ no resuelva.
+- **D (aceptar riesgo + logging)**: contradice "fundamentos para todas las decisiones".
 
-**Severidad:** crítico cuando ocurre, pero baja probabilidad (window <1s). Pero un OOM en el Nano durante el swap es plausible.
+**A++** es el patrón canónico industria, validado por:
+- Cog (Replicate, ~10k stars) en `pkg/weights/lockfile/lockfile.go` + PR #2974 (mayo 2026) expandiendo el patrón
+- OSTree (Fedora CoreOS) en `prepare_new_bootloader_link` + `swap_bootloader`
 
-**Fix:**
-- Recovery al startup detecta: `engine_binary_present=false` AND `previous_engine_present=true` AND `last_job.phase=swapping` → automáticamente promueve `.previous` a active y marca `degraded`.
-- O cambiar el swap por una secuencia con un solo `rename(2)` atómico usando symlinks (similar a `ln -sf nuevo current && atomic_rename current best_fp16.engine`).
+**Threat model cubierto:** SIGKILL/OOM/reboot del builder. **Fuera de scope:** power-loss físico (mitigación operativa con UPS/batería — alineado con MVP académico, CLAUDE.md).
+
+**Recovery window edge case conocido y aceptado:** SIGKILL en la ventana ~µs entre `mv active→previous engine` y `mv active→previous .ready` deja previous engine sin .ready. `reconcile_engine_state()` retorna `degraded` (no auto-promueve sin garantía de integridad). Detección explícita > silenciamiento.
+
+**Migración one-time** (requerida una sola vez por engine pre-A++ en el Nano): crear `.ready` manualmente para `engines/best_fp16.engine` y `engines/.previous/best_fp16.engine.old` existentes ANTES del primer arranque del server con el fix. Comando documentado en handoff o ejecutar smoke test post-deploy.
 
 ---
 
@@ -231,7 +247,7 @@ Si muere entre `← punto 1` y `← punto 2`, no hay `best_fp16.engine`. El serv
 ## Próximos pasos sugeridos (en orden)
 
 1. ~~**Fix V-1 (backup-to-HF)**~~ → ✅ resuelto 2026-05-16 con A+ híbrida (manifest a HF, binario local).
-2. **Fix V-2 (swap interrumpido)** → mejora de robustez, baja complejidad.
+2. ~~**Fix V-2 (swap interrumpido)**~~ → ✅ resuelto 2026-05-16 con A++ (centinela `.ready` + `reconcile_engine_state()` + fsync explícitos). Validado empíricamente con 3 spikes en hardware real.
 3. **Implementar V-5 (watchdog staleness)** → previene deadlocks de 45 min.
 4. **Implementar V-6 (deploy script)** → previene el bug del `nano_correctness` que ya pasó.
 5. **Implementar V-7 (histórico)** → completa la pestaña modelo.

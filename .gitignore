@@ -5,6 +5,9 @@ build/
 dist/
 wheels/
 *.egg-info
+.cache/
+.pytest_cache/
+systemd/
 
 # Virtual environments
 .venv
@@ -16,6 +19,10 @@ exports/
 
 # Obsidian (configuración local de la bóveda)
 .obsidian/
+
+# Playwright (configuración local de pruebas)
+.playwright/
+.playwright-cli/
 
 # Secrets / env
 .env

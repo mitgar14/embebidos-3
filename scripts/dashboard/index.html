@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>embebidos-3 · live detection</title>
-  <link rel="stylesheet" href="style.css?v=20260515-3" />
+  <link rel="stylesheet" href="style.css?v=20260516-9" />
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
@@ -94,7 +94,7 @@
 
     <aside class="panel">
       <section class="card card-compact" data-card="servidor">
-        <h2>servidor</h2>
+        <h2>Servidor</h2>
         <label>
           <span class="lbl" data-tip="Endpoint WebSocket. Cambialo si la IP del Nano no es la Tailscale por defecto.">dirección del servidor</span>
           <input id="ws-url" type="text" value="ws://100.100.166.120:8000/ws" />
@@ -106,7 +106,7 @@
       </section>
 
       <section class="card card-compact" data-card="camara">
-        <h2>cámara</h2>
+        <h2>Cámara</h2>
         <label>
           <span class="lbl" data-tip="Dispositivo de captura. La página intenta auto-iniciar la cámara por defecto.">dispositivo</span>
           <select id="cam-select"></select>
@@ -119,7 +119,7 @@
       </section>
 
       <section class="card" data-card="inferencia">
-        <h2>inferencia</h2>
+        <h2>Inferencia</h2>
         <label class="slider-row">
           <span class="lbl" data-tip="Umbral del detector. Predicciones con confianza menor se descartan.">certeza mínima</span>
           <span id="conf-value" class="value">50<span class="u">%</span></span>
@@ -137,7 +137,7 @@
       </section>
 
       <section class="card card-data" data-card="metricas">
-        <h2>métricas</h2>
+        <h2>Métricas</h2>
         <dl class="metrics">
           <div>
             <dt data-tip="Latencia de inferencia GPU (TensorRT FP16, motor best_fp16.engine).">tiempo de predicción</dt>
@@ -174,7 +174,8 @@
     </aside>
   </main>
 
-  <script src="modelo.js?v=20260516-3"></script>
-  <script src="app.js?v=20260516-2"></script>
+  <script src="ui.js?v=20260516-9"></script>
+  <script src="modelo.js?v=20260516-9"></script>
+  <script src="app.js?v=20260516-9"></script>
 </body>
 </html>

@@ -8,4 +8,9 @@ if [[ ! "$JOBID" =~ ^[A-Za-z0-9_-]{10,40}$ ]]; then
     echo "JOBID inválido: '$JOBID' (esperado: 10-40 chars [A-Za-z0-9_-])" >&2
     exit 1
 fi
-exec /bin/systemctl start "embebidos3-builder@${JOBID}.service"
+# --no-block es CRITICO: el unit es Type=oneshot, asi que sin esta flag
+# systemctl bloquearia hasta que el build termine (15-40 min). Con --no-block
+# systemctl encola el start y retorna en <1s, permitiendo al backend responder
+# rapido al cliente. El estado del job se monitorea via meta-files (no via
+# exit code de systemctl).
+exec /bin/systemctl start --no-block "embebidos3-builder@${JOBID}.service"

@@ -22,6 +22,9 @@ ACTIVE_ENGINE="${ROOT}/engines/best_fp16.engine"
 ACTIVE_META="${ROOT}/engines/best_fp16.engine.meta.json"
 PREV_ENGINE="${PREV_DIR}/best_fp16.engine.old"
 PREV_META="${PREV_DIR}/best_fp16.engine.old.meta.json"
+# V-2 fix: centinelas .ready como marker de commit del swap atómico
+ACTIVE_READY="${ROOT}/engines/best_fp16.engine.ready"
+PREV_READY="${PREV_DIR}/best_fp16.engine.old.ready"
 WORKSPACE="${EMBEBIDOS3_TRTEXEC_WORKSPACE:-512}"
 HF_TOKEN="${HF_TOKEN:-}"
 
@@ -33,6 +36,19 @@ flock -n "$LOCK_FD" || { echo "[BUILD] otro builder en curso, abort" >&2; exit 1
 echo "$$" > /run/embebidos3/builder.lock
 
 JS() { python3 "${ROOT}/scripts/builder_state.py" "${JOB_ID}" "$@"; }
+
+# V-2 fix: helper para fsync explícito (Bash no tiene fsync builtin).
+# Cubre los 3 ajustes de ronda 2: fsync del archivo + fsync del parent dir.
+# Sin fsync, ext4 con auto_da_alloc puede dejar el archivo en destino con
+# contenido parcial tras crash (ref: Ferrite ASPLOS 2016, LevelDB #195).
+fsync_path() {
+    python3 -c "
+import os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY)
+try: os.fsync(fd)
+finally: os.close(fd)
+" "$1"
+}
 
 cleanup() {
     local code=$?
@@ -49,9 +65,14 @@ cleanup() {
         echo "[BUILD] FAILED exit=$code" >&2
         JS finalize --phase failed --exit-code "$code" 2>/dev/null
     fi
-    # ARRANQUE INCONDICIONAL del server: la idempotencia la da systemd (si ya esta
-    # active, no-op). Es el ultimo paso del cleanup, garantizado por set +e arriba.
+    # ARRANQUE DEFENSIVO del server: el camino feliz mantiene el server vivo
+    # (HTTP release/reload), pero si murió por OOM o crash, lo levantamos.
+    # systemd es idempotente: si ya está active, no-op.
     sudo systemctl start embebidos3-server.service 2>/dev/null
+    # Best-effort reload del engine si el server quedó vivo en standby tras un
+    # fallo del build (engine antiguo seguía válido en disco, queremos servir
+    # detección de nuevo). En camino feliz, el paso 12 ya lo hizo.
+    curl --silent --max-time 5 -X POST http://127.0.0.1:8000/model/_internal/reload-engine >/dev/null 2>&1
 }
 trap cleanup EXIT
 
@@ -90,10 +111,18 @@ if [[ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]]; then
 fi
 mv "${ROOT}/onnx/best.onnx.tmp" "${ROOT}/onnx/best.onnx"
 
-# 5. stop server
+# 5. liberar engine del worker (NO matamos el server: el dashboard sigue viendo
+# /model/state, /jobs/{id}, /jobs/{id}/logs y muestra progreso en vivo).
+# Si el HTTP falla (server caído o cambio de protocolo), fallback al stop legacy
+# para no bloquear el build — el cleanup lo arranca de nuevo al final.
 JS phase --name stopped_server --pct 18
-sudo systemctl stop embebidos3-server.service
-sleep 3
+if curl --silent --max-time 10 --fail -X POST http://127.0.0.1:8000/model/_internal/release-engine >/dev/null 2>&1; then
+    echo "[BUILD] engine liberado vía HTTP, server sigue vivo" >&2
+else
+    echo "[BUILD] WARN: HTTP release-engine falló, fallback a systemctl stop" >&2
+    sudo systemctl stop embebidos3-server.service
+    sleep 3
+fi
 
 # 6. prep Nano
 JS phase --name prep_nano --pct 22
@@ -188,19 +217,37 @@ if [[ -f "$PREV_ENGINE" ]]; then
 fi
 JS phase --name backed_up_previous --pct 92
 
-# 10. swap atómico
-rm -f "$PREV_ENGINE" "$PREV_META"
+# 10. swap atómico A++ (V-2 fix 2026-05-16: centinela .ready + fsync explícitos)
+# Sustento: investigaciones/2026-05-16-atomic-swap-engine-recovery-mvp.md (ronda 1+2)
+# Validación empírica: .planning/spikes/00{1,2,3}-* (17/17 asserts PASS)
+# Patrón base: Cog .cog/ready + OSTree loader.tmp.
+fsync_path "$STAGING_ENGINE"                              # ajuste #1: fsync staging
+rm -f "$PREV_ENGINE" "$PREV_META" "$PREV_READY"
 if [[ -f "$ACTIVE_ENGINE" ]]; then
     mv "$ACTIVE_ENGINE" "$PREV_ENGINE"
     [[ -f "$ACTIVE_META" ]] && mv "$ACTIVE_META" "$PREV_META" || true
+    # El .ready del active anterior hereda validez como .ready del previous
+    if [[ -f "$ACTIVE_READY" ]]; then
+        mv "$ACTIVE_READY" "$PREV_READY"
+    fi
+    fsync_path "$PREV_DIR"                                # ajuste #1: fsync parent dir
 fi
+rm -f "$ACTIVE_READY"                                     # borrar centinela mientras el active es incompleto
 mv "$STAGING_ENGINE" "$ACTIVE_ENGINE"
+fsync_path "$ACTIVE_ENGINE"                               # ajuste #1: fsync engine promovido
 BUILD_DUR=$(( $(date +%s) - BUILD_START_UNIX ))
 python3 "${ROOT}/scripts/write_engine_meta.py" \
     "$ACTIVE_ENGINE" "$HF_REV" "$EXPECTED_SHA" "$WORKSPACE" \
     --build-duration-s "$BUILD_DUR" \
     --validation-json "$VAL_JSON" \
     ${HF_COMMIT_DATE:+--hf-commit-date "$HF_COMMIT_DATE"}
+# Commit final: escribir centinela como ÚLTIMA operación atómica (tmp + rename)
+ACTIVE_SHA=$(sha256sum "$ACTIVE_ENGINE" | awk '{print $1}')
+TMP_READY="${ACTIVE_READY}.tmp"
+echo "{\"committed_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"engine_sha256\":\"$ACTIVE_SHA\"}" > "$TMP_READY"
+fsync_path "$TMP_READY"
+mv "$TMP_READY" "$ACTIVE_READY"
+fsync_path "${ROOT}/engines"                              # ajuste #1: fsync parent dir final
 JS phase --name swapped --pct 95
 
 # 11. restore Nano
@@ -208,8 +255,15 @@ JS phase --name restoring_nano --pct 97
 sudo systemctl start lightdm.service 2>/dev/null || true
 sudo sysctl vm.swappiness=60 >/dev/null
 
-# 12. start server
+# 12. recargar engine en el worker (server sigue vivo desde antes).
+# Si el HTTP falla, fallback a systemctl start (cubre el caso en que el step 5
+# matóel server con el fallback legacy).
 JS phase --name starting_server --pct 99
-sudo systemctl start embebidos3-server.service
+if curl --silent --max-time 35 --fail -X POST http://127.0.0.1:8000/model/_internal/reload-engine >/dev/null 2>&1; then
+    echo "[BUILD] engine recargado vía HTTP, dashboard listo" >&2
+else
+    echo "[BUILD] WARN: HTTP reload-engine falló, fallback a systemctl start" >&2
+    sudo systemctl start embebidos3-server.service
+fi
 
 JS finalize --phase done --exit-code 0

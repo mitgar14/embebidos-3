@@ -14,8 +14,10 @@ TEST_IMAGES_DIR = ROOT / "test_images"
 
 ACTIVE_ENGINE = ENGINES_DIR / "best_fp16.engine"
 ACTIVE_ENGINE_META = ENGINES_DIR / "best_fp16.engine.meta.json"
+ACTIVE_ENGINE_READY = ENGINES_DIR / "best_fp16.engine.ready"
 PREVIOUS_ENGINE = PREVIOUS_DIR / "best_fp16.engine.old"
 PREVIOUS_ENGINE_META = PREVIOUS_DIR / "best_fp16.engine.old.meta.json"
+PREVIOUS_ENGINE_READY = PREVIOUS_DIR / "best_fp16.engine.old.ready"
 
 # NOTA: en Fase A el systemd RuntimeDirectory=embebidos3 materializa /run/embebidos3/.
 # En Linux moderno /var/run es symlink a /run, pero usamos /run/embebidos3 directo
