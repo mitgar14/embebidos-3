@@ -80,8 +80,8 @@
           <dt>workspace</dt><dd>${(m.trtexec_args || []).find(a => a.startsWith('--workspace=')) || '—'}</dd>
         </dl>
         <div class="modelo-actions">
-          <button id="btn-check-updates">verificar actualizaciones</button>
-          <button id="btn-force-rebuild">forzar recompilación</button>
+          <button id="btn-check-updates" title="Compara la revisión y el SHA256 del ONNX local contra HF Hub.">verificar actualizaciones</button>
+          <button id="btn-force-rebuild" title="Vuelve a descargar el ONNX actual de HF y compila el engine desde cero. Útil si el engine local está corrupto o cambiaste parámetros de build.">recompilar engine</button>
         </div>
       </div>`;
   }
@@ -140,13 +140,13 @@
           <dt>repo</dt><dd class="mono small">mitgar14/embebidos-3-models</dd>
           <dt>revision activa</dt><dd class="mono">${(m.hf_revision || '—').slice(0,7)}</dd>
         </dl>
-        <button id="btn-side-check" class="ghost">verificar ahora</button>
+        <button id="btn-side-check" class="ghost" title="Consulta HF Hub: compara el SHA256 del ONNX local contra el último publicado.">verificar ahora</button>
       </section>
 
       <section class="side-card">
         <h3>acciones</h3>
-        <button id="btn-side-rebuild" class="ghost">forzar recompilación</button>
-        <button id="btn-side-rollback" class="ghost" ${prev ? '' : 'disabled'}>revertir a engine anterior</button>
+        <button id="btn-side-rebuild" class="ghost" title="Vuelve a descargar el ONNX actual de HF y compila el engine desde cero. Útil si el engine local está corrupto o cambiaste parámetros de build.">recompilar engine</button>
+        <button id="btn-side-rollback" class="ghost" title="Restaura el engine anterior (swap inverso). Solo disponible si hay un backup." ${prev ? '' : 'disabled'}>revertir a engine anterior</button>
       </section>
 
       <section class="side-card">
@@ -223,15 +223,41 @@
     try {
       const r = await fetch(api('/model/check-updates'), { method: 'POST' });
       const data = await r.json();
-      if (data.up_to_date) {
-        alert('Modelo al día.');
-      } else {
-        const latest = (data.latest_revision || '').slice(0, 7);
-        const current = (data.current_revision || '—').slice(0, 7);
-        alert(`Hay novedad: ${latest} (actual ${current})`);
-      }
+      alert(formatCheckUpdatesMessage(data));
       fetchState();
     } catch (e) { alert(e.message); }
+  }
+
+  function formatCheckUpdatesMessage(data) {
+    const latestRev = (data.latest_revision || '').slice(0, 7) || '—';
+    const currentRev = (data.current_revision || '').slice(0, 7) || '—';
+    const latestSha = (data.latest_onnx_sha256 || '').slice(0, 8) || '—';
+    const currentSha = (data.current_onnx_sha256 || '').slice(0, 8) || '—';
+
+    if (!data.has_engine) {
+      return `Sin engine compilado en el Nano.\n` +
+             `HF Hub tiene la versión ${latestRev} (ONNX ${latestSha}).\n\n` +
+             `Usá "descargar y compilar engine" para traerla.`;
+    }
+    if (data.up_to_date && data.same_revision) {
+      return `Modelo al día.\n` +
+             `Commit ${currentRev} · ONNX ${currentSha}.`;
+    }
+    if (data.up_to_date && !data.same_revision) {
+      return `Modelo al día (mismo ONNX ${currentSha}).\n\n` +
+             `HF tiene commits nuevos sin tocar el modelo: ${currentRev} → ${latestRev}.\n` +
+             `No es necesario recompilar.`;
+    }
+    if (!data.same_onnx && !data.same_revision) {
+      return `Nueva iteración del modelo disponible.\n\n` +
+             `ONNX: ${currentSha} → ${latestSha}\n` +
+             `Commit: ${currentRev} → ${latestRev}\n\n` +
+             `Usá "recompilar engine" para actualizar.`;
+    }
+    return `Inconsistencia detectada:\n` +
+           `mismo commit (${currentRev}) pero ONNX distinto ` +
+           `(${currentSha} ≠ ${latestSha}).\n\n` +
+           `Revisá HF Hub manualmente.`;
   }
 
   function startLogsStream(jobId) {
