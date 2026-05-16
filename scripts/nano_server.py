@@ -39,7 +39,7 @@ import cv2
 import numpy as np
 import pycuda.driver as cuda
 import tensorrt as trt
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Path as FPath, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
@@ -483,6 +483,22 @@ def model_build(req: BuildRequest = BuildRequest()):
         "monitor_url": "/jobs/{}".format(job_id),
         "logs_stream_url": "/jobs/{}/logs".format(job_id),
     }
+
+
+@app.get("/jobs/active")
+def jobs_active():
+    return _read_active_job()
+
+
+@app.get("/jobs/{job_id}")
+def jobs_get(job_id: str = FPath(..., pattern=r"^[A-Za-z0-9_-]{10,40}$")):
+    active = _read_active_job()
+    if active and active.get("job_id") == job_id:
+        return active
+    final = JOBS_LOGS_DIR / "{}.json".format(job_id)
+    if final.exists():
+        return json.loads(final.read_text())
+    raise HTTPException(404, {"ok": False, "error": "job_not_found"})
 
 
 @app.websocket("/ws")
