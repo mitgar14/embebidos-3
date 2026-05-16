@@ -331,12 +331,21 @@ def read_ram_mb() -> dict:
 app = FastAPI(title="embebidos-3 nano inference server")
 worker = TRTWorker(ENGINE_PATH)
 
+from recover_job_state import recover_job_state as _rjs
+
+_recovered_job_at_startup = None
+
 
 @app.on_event("startup")
 def _startup():
+    global _recovered_job_at_startup
     worker.start()
     if not worker.wait_ready(60):
         raise RuntimeError("TRT worker no ready en 60s")
+    _recovered_job_at_startup = _rjs()
+    if _recovered_job_at_startup:
+        print(f"[server] job recovery: status={_recovered_job_at_startup.get('status')} "
+              f"job_id={_recovered_job_at_startup.get('job_id')}", flush=True)
     print(f"[server] engine listo. ws://0.0.0.0:8000/ws", flush=True)
 
 
