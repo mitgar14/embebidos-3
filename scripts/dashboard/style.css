@@ -949,10 +949,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, .action:focus-v
    con viewBox 24x24 se renderean a su tamaño natural (gigantes). */
 .ic { width: 14px; height: 14px; flex: 0 0 auto; display: inline-block; vertical-align: -2px; }
 h3 .ic, h2 .ic { width: 13px; height: 13px; }
-.sb-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.sb-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .sb-action .ic { width: 13px; height: 13px; }
-button.ghost.xs { display: inline-flex; align-items: center; gap: 4px; }
+button.ghost.xs { display: inline-flex; align-items: center; gap: 6px; }
 button.ghost.xs .ic { width: 11px; height: 11px; }
+/* Iconos en h2/h3 también con un toque más de aire */
+.sb-section h3, .panel > .card h2 { gap: 8px; }
 .kv { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; font-size: var(--fs-meta); margin: 0; }
 .kv dt { color: var(--text-muted); }
 .kv dd { text-align: right; margin: 0; }

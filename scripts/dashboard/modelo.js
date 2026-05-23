@@ -377,7 +377,7 @@
           <dt>Revisión</dt><dd class="mono">${(m.hf_revision || '—').slice(0,7)}</dd>
         </dl>
         <button id="btn-side-check" class="sb-action" title="Consulta HF Hub: compara el SHA256 del ONNX local contra el último publicado.">
-          <svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg>Verificar actualizaciones
+          <svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg><span>Verificar actualizaciones</span>
         </button>
       </section>
 
@@ -438,7 +438,7 @@
     let action = '';
     if (j.can_rollback_to) {
       const ref = j.status === 'previous' ? '__previous__' : (j.archive_id || '');
-      action = `<button class="ghost xs" data-archive="${ref}" title="Restaurar este engine como activo"><svg class="ic" aria-hidden="true"><use href="#i-rotate-ccw"/></svg>revertir</button>`;
+      action = `<button class="ghost xs" data-archive="${ref}" title="Restaurar este engine como activo"><svg class="ic" aria-hidden="true"><use href="#i-rotate-ccw"/></svg><span>revertir</span></button>`;
     }
     return `
       <li class="hist-row" data-status="${j.status}">
