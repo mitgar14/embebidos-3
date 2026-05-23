@@ -1,0 +1,24 @@
+name: embebidos3-label
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch=2.4.*
+  - pytorch-cuda=12.4
+  - torchvision
+  - pip:
+      # Autodistill stack
+      - autodistill>=0.1.20
+      - autodistill-grounding-dino>=0.1
+      - supervision>=0.21
+      # Servicio
+      - fastapi>=0.110
+      - uvicorn[standard]>=0.27
+      - pydantic>=2.5
+      - python-multipart>=0.0.9
+      # Persistencia y subida
+      - huggingface_hub>=0.20
+      - python-dotenv>=1.0

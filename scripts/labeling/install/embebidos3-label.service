@@ -1,0 +1,37 @@
+[Unit]
+Description=embebidos3-label — Autolabeling API (Autodistill + Grounding DINO)
+Documentation=file:///opt/embebidos3-label/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=/opt/embebidos3-label
+ExecStart=/home/__USER__/miniconda3/envs/embebidos3-label/bin/uvicorn \
+    scripts.labeling.server.main:app \
+    --host 127.0.0.1 \
+    --port 8765 \
+    --log-level info
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# CUDA en WSL2: el driver vive en /usr/lib/wsl/lib desde el host Windows.
+Environment=CUDA_VISIBLE_DEVICES=0
+Environment=PATH=/home/__USER__/miniconda3/envs/embebidos3-label/bin:/usr/lib/wsl/lib:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Persistencia: state en /run (volatil), jobs en /var/lib (persistente).
+Environment=EMBEBIDOS3_LABEL_STATE_DIR=/run/embebidos3-label
+Environment=EMBEBIDOS3_LABEL_JOBS_DIR=/var/lib/embebidos3-label/jobs
+
+# HF_TOKEN se inyecta desde EnvironmentFile (instalador genera /etc/embebidos3-label.env)
+EnvironmentFile=-/etc/embebidos3-label.env
+
+# Limites para no comer todo el host:
+LimitNOFILE=4096
+MemoryMax=5G
+
+[Install]
+WantedBy=multi-user.target
