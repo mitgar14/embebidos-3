@@ -6,7 +6,8 @@
 # Container:  vastai/base-image:cuda-12.4.1-cudnn-devel-ubuntu22.04-py310
 # Decisiones: D2 (stack), D3 (Vast.ai), D5 (uv), D6 (venv trackb),
 #             D8 (HF Hub), D9 (tmux), D11 (cron watchdog), D17, D18,
-#             D30 (torch cu124 pin), D33 (/etc/vast-env para cron)
+#             D30 (torch cu124 pin), D33 (/etc/vast-env para cron),
+#             D34 (pin torch==2.4.1 version, no --extra-index-url torch)
 # Idempotente: sí
 # Gotchas:    G-VAST-02 (tmux antes de tmux new), G-VAST-03 (uv no pip),
 #             G-VAST-04 (LF endings — usar `dos2unix` si copiaste desde Win),
@@ -53,14 +54,17 @@ fi
 # ---- 4) Stack Track B (D2, D30) — versiones congeladas ----------------------
 # D30 (2026-05-14): pinear torch al wheel cu124 explícito. Driver de Vast.ai
 # (mayo 2026) está en la franja CUDA 12.4-12.8; cu130 requiere >=12.9 y falla.
-# Sin --index-url, uv resuelve a torch 2.12+cu130 que no carga.
+# D34 (2026-05-20): además de --index-url cu124, PINEAR versiones de torch y
+# torchvision. Sin pin, uv resuelve a torch 2.12 (más nuevo en pypi via
+# --extra-index-url) que viene como +cu130 y no carga con driver 12.4.
 echo "[4/8] stack Track B"
 
-# 4a) PyTorch primero, desde wheel CUDA explícito (cu124 cubre 12.4-12.8).
+# 4a) PyTorch primero, versión pineada al wheel CUDA explícito (cu124).
+# NO usar --extra-index-url aquí — pypi tiene torch 2.12+cu130 más reciente
+# y uv prefiere version > index. Resto del stack instala desde pypi en 4b.
 uv pip install --python "$VENV/bin/python" \
   --index-url https://download.pytorch.org/whl/cu124 \
-  --extra-index-url https://pypi.org/simple \
-  torch torchvision
+  torch==2.4.1 torchvision==0.19.1
 
 # 4b) Resto del stack — Ultralytics ya no toca torch (lo encuentra instalado).
 uv pip install --python "$VENV/bin/python" \
