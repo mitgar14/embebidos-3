@@ -362,30 +362,24 @@
     const m = s.active_engine || {};
     const prev = s.previous_engine;
     side.innerHTML = `
-      <section class="side-card">
+      <section class="sb-section">
         <h3>Servidor</h3>
         <dl class="kv">
-          <dt>Estado</dt><dd>activo</dd>
-          <dt>Endpoint</dt><dd class="mono">${apiBase()}</dd>
+          <dt>estado</dt><dd>activo</dd>
+          <dt>endpoint</dt><dd class="mono">${apiBase()}</dd>
         </dl>
       </section>
 
-      <section class="side-card">
+      <section class="sb-section">
         <h3>HF Hub</h3>
         <dl class="kv">
-          <dt>Repo</dt><dd class="mono small">${(s.hf && s.hf.repo) || 'mitgar14/embebidos-3-models'}</dd>
-          <dt>Revisión activa</dt><dd class="mono">${(m.hf_revision || '—').slice(0,7)}</dd>
+          <dt>repo</dt><dd class="mono small">${(s.hf && s.hf.repo) || 'mitgar14/embebidos-3-models'}</dd>
+          <dt>revisión</dt><dd class="mono">${(m.hf_revision || '—').slice(0,7)}</dd>
         </dl>
-        <button id="btn-side-check" class="ghost" title="Consulta HF Hub: compara el SHA256 del ONNX local contra el último publicado.">Verificar ahora</button>
+        <button id="btn-side-check" class="sb-action" title="Consulta HF Hub: compara el SHA256 del ONNX local contra el último publicado.">Verificar actualizaciones</button>
       </section>
 
-      <section class="side-card">
-        <h3>Acciones</h3>
-        <button id="btn-side-rebuild" class="ghost" title="Vuelve a descargar el ONNX actual de HF y compila el engine desde cero. Útil si el engine local está corrupto o cambiaste parámetros de build.">Recompilar engine</button>
-        <button id="btn-side-rollback" class="ghost" title="Restaura el engine anterior (swap inverso). Solo disponible si hay un backup." ${prev ? '' : 'disabled'}>Revertir a engine anterior</button>
-      </section>
-
-      <section class="side-card">
+      <section class="sb-section">
         <h3>Histórico</h3>
         <ul id="hist-list" class="hist-list" aria-busy="true">
           <li class="hint">cargando…</li>
@@ -394,10 +388,6 @@
     `;
     const sb = document.getElementById('btn-side-check');
     if (sb) sb.onclick = () => checkUpdates(sb);
-    const fb = document.getElementById('btn-side-rebuild');
-    if (fb) fb.onclick = () => triggerBuild(true, fb);
-    const rb = document.getElementById('btn-side-rollback');
-    if (rb && !rb.disabled) rb.onclick = () => rollback(rb);
     fetchAndRenderHistorico();
   }
 
@@ -449,7 +439,7 @@
       action = `<button class="ghost xs" data-archive="${ref}" title="Restaurar este engine como activo">revertir</button>`;
     }
     return `
-      <li class="hist-row">
+      <li class="hist-row" data-status="${j.status}">
         <div class="hist-line">
           ${badge}
           <span class="mono small" title="engine sha256 (12)">eng:${eng}</span>
@@ -457,7 +447,7 @@
           ${flags.join('')}
         </div>
         <div class="hist-foot">
-          <span class="hint" ${isoTitle ? `title="${isoTitle}"` : ''}>${when || '—'}${dur ? ' · ' + dur : ''}</span>
+          <span ${isoTitle ? `title="${isoTitle}"` : ''}>${when || '—'}${dur ? ' · ' + dur : ''}</span>
           ${action}
         </div>
       </li>`;
