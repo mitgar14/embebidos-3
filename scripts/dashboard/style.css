@@ -275,31 +275,46 @@ body {
   padding-right: 2px;
 }
 
-/* rhythm: setup cards juntos, controles separados, métricas mas separadas */
-.panel > .card + .card { margin-top: 8px; }
-.panel > [data-card="inferencia"] { margin-top: 14px; }
-.panel > [data-card="metricas"] { margin-top: 14px; }
+/* Sidebar live: flat-section pattern (mismo esquema que .sb-section del
+   sidebar modelo). Hairlines entre secciones, no cards anidados.        */
+.panel > .card + .card { margin-top: 0; }
+.panel > [data-card="inferencia"] { margin-top: 0; }
+.panel > [data-card="metricas"] { margin-top: 0; }
 
 .card {
-  background: var(--bg-elev-1);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 12px;
   flex-shrink: 0;
 }
-.card-compact { padding: 8px 12px; }
-.card-data {
-  padding: 12px;
-  background: var(--bg-elev-2);
-  border-color: var(--border-strong);
+.panel > .card {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 16px 0 18px;
+}
+.panel > .card:first-child { padding-top: 4px; }
+.panel > .card:last-child  { border-bottom: none; padding-bottom: 4px; }
+/* card-compact / card-data ya no introducen styling visual propio en el
+   sidebar (consistencia flat). Mantenidos como hooks semánticos.        */
+.card-compact, .card-data { padding: 16px 0 18px; background: transparent; border-color: var(--border); }
+
+.panel > .card h2 {
+  margin: 0 0 12px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
+/* Fallback para .card h2 fuera del .panel (si alguien lo reusa). */
 .card h2 {
   margin: 0 0 8px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
-  text-transform: none;
   letter-spacing: 0.005em;
 }
 
@@ -925,7 +940,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, .action:focus-v
   letter-spacing: 0.08em;
   color: var(--text-muted);
   margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
+
+/* Iconos inline (Lucide/Feather). Tamaño FIJO — sin esto, los SVG inline
+   con viewBox 24x24 se renderean a su tamaño natural (gigantes). */
+.ic { width: 14px; height: 14px; flex: 0 0 auto; display: inline-block; vertical-align: -2px; }
+h3 .ic, h2 .ic { width: 13px; height: 13px; }
+.sb-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.sb-action .ic { width: 13px; height: 13px; }
+button.ghost.xs { display: inline-flex; align-items: center; gap: 4px; }
+button.ghost.xs .ic { width: 11px; height: 11px; }
 .kv { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; font-size: var(--fs-meta); margin: 0; }
 .kv dt { color: var(--text-muted); }
 .kv dd { text-align: right; margin: 0; }

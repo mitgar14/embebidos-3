@@ -363,24 +363,26 @@
     const prev = s.previous_engine;
     side.innerHTML = `
       <section class="sb-section">
-        <h3>Servidor</h3>
+        <h3><svg class="ic" aria-hidden="true"><use href="#i-server"/></svg>Servidor</h3>
         <dl class="kv">
-          <dt>estado</dt><dd>activo</dd>
-          <dt>endpoint</dt><dd class="mono">${apiBase()}</dd>
+          <dt>Estado</dt><dd>activo</dd>
+          <dt>Endpoint</dt><dd class="mono">${apiBase()}</dd>
         </dl>
       </section>
 
       <section class="sb-section">
-        <h3>HF Hub</h3>
+        <h3><svg class="ic" aria-hidden="true"><use href="#i-cloud"/></svg>HF Hub</h3>
         <dl class="kv">
-          <dt>repo</dt><dd class="mono small">${(s.hf && s.hf.repo) || 'mitgar14/embebidos-3-models'}</dd>
-          <dt>revisión</dt><dd class="mono">${(m.hf_revision || '—').slice(0,7)}</dd>
+          <dt>Repo</dt><dd class="mono small">${(s.hf && s.hf.repo) || 'mitgar14/embebidos-3-models'}</dd>
+          <dt>Revisión</dt><dd class="mono">${(m.hf_revision || '—').slice(0,7)}</dd>
         </dl>
-        <button id="btn-side-check" class="sb-action" title="Consulta HF Hub: compara el SHA256 del ONNX local contra el último publicado.">Verificar actualizaciones</button>
+        <button id="btn-side-check" class="sb-action" title="Consulta HF Hub: compara el SHA256 del ONNX local contra el último publicado.">
+          <svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg>Verificar actualizaciones
+        </button>
       </section>
 
       <section class="sb-section">
-        <h3>Histórico</h3>
+        <h3><svg class="ic" aria-hidden="true"><use href="#i-history"/></svg>Histórico</h3>
         <ul id="hist-list" class="hist-list" aria-busy="true">
           <li class="hint">cargando…</li>
         </ul>
@@ -436,7 +438,7 @@
     let action = '';
     if (j.can_rollback_to) {
       const ref = j.status === 'previous' ? '__previous__' : (j.archive_id || '');
-      action = `<button class="ghost xs" data-archive="${ref}" title="Restaurar este engine como activo">revertir</button>`;
+      action = `<button class="ghost xs" data-archive="${ref}" title="Restaurar este engine como activo"><svg class="ic" aria-hidden="true"><use href="#i-rotate-ccw"/></svg>revertir</button>`;
     }
     return `
       <li class="hist-row" data-status="${j.status}">
