@@ -959,7 +959,10 @@ button.ghost.xs .ic { width: 11px; height: 11px; }
 .kv dt { color: var(--text-muted); }
 .kv dd { text-align: right; margin: 0; }
 .sb-action {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   width: 100%;
   margin: 12px 0 0;
   padding: 6px;
