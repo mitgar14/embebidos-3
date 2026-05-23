@@ -6,6 +6,10 @@
     sse: null,
     sseJobId: null,   // job_id del SSE activo, para evitar re-abrir en cada poll
     lastState: null,
+    // Signatures para evitar re-render innecesario en cada poll (3 s).
+    // Si nada relevante cambió, no tocamos el DOM → cero flicker.
+    lastMainSig: null,
+    lastSidebarSig: null,
   };
 
   function apiBase() {
@@ -87,13 +91,61 @@
     }
   }
 
+  // Signature de campos cuyo cambio justifica re-renderizar el <main>.
+  // NO incluye campos high-frequency como progress_pct o phase (esos se
+  // actualizan inline via _updateBuildProgress, sin tocar el árbol DOM).
+  function _mainSignature(s) {
+    const ae = s.active_engine || {};
+    const aj = s.active_job || {};
+    return [
+      s.state,
+      ae.engine_sha256 || '',
+      ae.hf_revision || '',
+      ae.hf_commit_date || '',
+      aj.job_id || '',
+      s.engine_binary_present ? '1' : '0',
+    ].join('|');
+  }
+
+  // Updates inline durante building — sin destruir el DOM (no recrea logs-stream).
+  function _updateBuildProgress(s) {
+    const j = s.active_job || {};
+    const pct = j.progress_pct || 0;
+    const fill = document.querySelector('.build-progress-fill');
+    if (fill) fill.style.width = pct + '%';
+    const phaseEl = document.querySelector('.build-phase');
+    if (phaseEl) phaseEl.textContent = j.phase || '—';
+    const pctEl = document.querySelector('.build-pct');
+    if (pctEl) pctEl.textContent = pct + '%';
+  }
+
   function render(s) {
     const main = document.getElementById('modelo-content');
     if (!main) return;
-    const tpl = TEMPLATES[s.state] || TEMPLATES.no_model;
-    main.innerHTML = tpl(s);
+    const sig = _mainSignature(s);
+    if (sig !== state.lastMainSig) {
+      state.lastMainSig = sig;
+      const tpl = TEMPLATES[s.state] || TEMPLATES.no_model;
+      main.innerHTML = tpl(s);
+      wireActions(s);
+    } else if (s.state === 'building') {
+      // mismo signature: solo refrescamos progressbar/fase del job en curso
+      _updateBuildProgress(s);
+    }
+    // SSE en building debe asegurarse en CADA poll (no solo cuando hay
+    // re-render), por si se cayó mid-build. Idempotente — _ensureLogsStream
+    // no reabre si ya está conectado al mismo job.
+    _ensureLogsStream(s);
     renderSidebar(s);
-    wireActions(s);
+  }
+
+  function _ensureLogsStream(s) {
+    if (s.state === 'building' && s.active_job && s.active_job.job_id) {
+      if (state.sse && state.sseJobId === s.active_job.job_id) return;
+      startLogsStream(s.active_job.job_id);
+    } else if (state.sse) {
+      stopLogsStream();
+    }
   }
 
   // Cuando el server no responde (típicamente: build en curso que detuvo el server).
@@ -286,9 +338,27 @@
       </section>`;
   }
 
+  // Signature del sidebar: cambia solo cuando el contenido visible del card
+  // realmente difiere. Si nada cambió, NO tocamos el DOM (el histórico ya
+  // cargado se queda intacto — sin parpadeo "cargando…").
+  function _sidebarSignature(s) {
+    const m = s.active_engine || {};
+    const p = s.previous_engine || {};
+    return [
+      (s.hf && s.hf.repo) || '',
+      (m.hf_revision || '').slice(0, 12),
+      m.engine_sha256 || '',
+      p.engine_sha256 || '',
+      apiBase(),
+    ].join('|');
+  }
+
   function renderSidebar(s) {
     const side = document.querySelector('.modelo-side');
     if (!side) return;
+    const sig = _sidebarSignature(s);
+    if (sig === state.lastSidebarSig) return;   // sin cambios → no tocamos el DOM
+    state.lastSidebarSig = sig;
     const m = s.active_engine || {};
     const prev = s.previous_engine;
     side.innerHTML = `
@@ -510,18 +580,9 @@
     const btnCancel = document.getElementById('btn-cancel');
     if (btnCancel) btnCancel.onclick = () => cancelBuild(s.active_job?.job_id, btnCancel);
 
-    if (s.state === 'building' && s.active_job?.job_id) {
-      // FIX 2026-05-16: solo abrir SSE si no hay uno activo para el mismo job.
-      // Antes: cada poll (3 s) cerraba y reabría → el server re-leía el .log
-      // desde el principio → logs en bucle visible para el usuario.
-      if (state.sse && state.sseJobId === s.active_job.job_id) {
-        // ya conectado, no tocar
-      } else {
-        startLogsStream(s.active_job.job_id);
-      }
-    } else {
-      stopLogsStream();
-    }
+    // SSE lifecycle vive en _ensureLogsStream (llamado desde render en cada
+    // poll, no solo cuando hay re-render). Mantener acá causaba flicker:
+    // wireActions corría tras innerHTML reset, perdíamos los logs ya pintados.
   }
 
   // Verificación post-error: el patrón "naive rollback creates a false negative" — si el POST
