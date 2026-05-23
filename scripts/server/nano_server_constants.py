@@ -19,6 +19,10 @@ PREVIOUS_ENGINE = PREVIOUS_DIR / "best_fp16.engine.old"
 PREVIOUS_ENGINE_META = PREVIOUS_DIR / "best_fp16.engine.old.meta.json"
 PREVIOUS_ENGINE_READY = PREVIOUS_DIR / "best_fp16.engine.old.ready"
 
+# Histórico de engines: cada build exitoso archiva el anterior aquí
+# (subdir <YYYYMMDDTHHMMSSZ>__<sha8>/ con engine + meta + manifest).
+ENGINES_ARCHIVE_DIR = ROOT / "engines-archive"
+
 # NOTA: en Fase A el systemd RuntimeDirectory=embebidos3 materializa /run/embebidos3/.
 # En Linux moderno /var/run es symlink a /run, pero usamos /run/embebidos3 directo
 # para ser explícitos y evitar sorpresas en otras plataformas.

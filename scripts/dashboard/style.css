@@ -1146,3 +1146,63 @@ button:focus-visible, input:focus-visible, select:focus-visible, .action:focus-v
   .modal-actions { flex-direction: column-reverse; align-items: stretch; }
   .modal-actions button { width: 100%; }
 }
+
+/* ============ HISTÓRICO (sidebar card) ============ */
+/* Lista vertical de engines (active + previous + archives) con acción
+   "revertir" inline. Densidad alta, sin scroll horizontal; el botón
+   queda contra el borde derecho para tap target consistente.            */
+
+.hist-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hist-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--bg-elev-1) 60%, transparent);
+}
+.hist-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.hist-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.hist-foot .hint { font-size: 10px; }
+
+.pill {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  background: transparent;
+  line-height: 1.4;
+}
+.pill-on    { color: var(--ok);    border-color: color-mix(in oklch, var(--ok) 60%, var(--border-strong)); background: color-mix(in oklch, var(--ok) 12%, transparent); }
+.pill-warn  { color: var(--warn);  border-color: color-mix(in oklch, var(--warn) 60%, var(--border-strong)); background: color-mix(in oklch, var(--warn) 10%, transparent); }
+.pill-ghost { color: var(--text-muted); }
+
+button.ghost.xs {
+  width: auto;
+  padding: 2px 8px;
+  font-size: 10px;
+  margin: 0;
+}

@@ -28,6 +28,7 @@ import json
 import os
 import queue
 import re
+import shutil
 import signal
 import subprocess
 import threading
@@ -54,7 +55,7 @@ from nano_server_constants import (
     ACTIVE_ENGINE, IMGSZ, CLASSES, DEFAULT_CONF, DEFAULT_NMS,
     JOB_STATE_FILE, HEARTBEAT_STALE_SEC,
     ACTIVE_ENGINE_META, PREVIOUS_ENGINE, PREVIOUS_ENGINE_META, JOBS_LOGS_DIR,
-    HF_REPO, HF_REVISION_DEFAULT,
+    HF_REPO, HF_REVISION_DEFAULT, ENGINES_ARCHIVE_DIR,
 )
 from pid_utils import is_pid_alive as _is_pid_alive, check_cmdline as _check_cmdline
 from recover_job_state import recover_job_state as _rjs, reconcile_engine_state as _res
@@ -674,6 +675,170 @@ def model_rollback():
     # hot-reload worker
     worker.request_swap(str(ACTIVE_ENGINE))
     return {"ok": True, "phase": "rolled_back"}
+
+
+# ---------- Histórico de engines + rollback arbitrario ------------------------
+_ARCHIVE_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z__[A-Fa-f0-9]{6,16}$")
+
+
+def _engine_summary(meta, status, engine_path, archive_id, can_rollback_to):
+    """Construye la entrada de /jobs para un engine (active/previous/archived)."""
+    eng_sha = meta.get("engine_sha256") or ""
+    rev = meta.get("hf_revision") or ""
+    return {
+        "status": status,
+        "archive_id": archive_id,
+        "engine_sha256": eng_sha or None,
+        "engine_sha256_short": eng_sha[:12] if eng_sha else None,
+        "onnx_sha256_short": (meta.get("onnx_sha256") or "")[:12] or None,
+        "hf_revision": rev or None,
+        "hf_revision_short": rev[:7] if rev and len(rev) > 7 else (rev or None),
+        "hf_commit_date": meta.get("hf_commit_date"),
+        "build_completed_at": (
+            meta.get("build_completed_at") or meta.get("archived_at_utc")
+        ),
+        "build_duration_s": meta.get("build_duration_s"),
+        "size_bytes": meta.get("size_bytes"),
+        "has_binary": bool(engine_path and engine_path.exists()),
+        "can_rollback_to": bool(
+            can_rollback_to and engine_path and engine_path.exists()
+        ),
+        "from_fallback": bool(meta.get("from_fallback", False)),
+        "adopted": meta.get("adopted"),
+        "rolled_back_from_archive": meta.get("rolled_back_from_archive"),
+    }
+
+
+def _load_archive_meta(archive_dir):
+    """Reconstruye el meta de un archive desde meta.json + manifest.json."""
+    meta = _read_engine_meta(archive_dir / "best_fp16.engine.meta.json") or {}
+    manifest_path = archive_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+            inline = manifest.get("source_meta_inline") or {}
+            for k, v in inline.items():
+                meta.setdefault(k, v)
+            if "archived_at_utc" in manifest:
+                meta.setdefault("archived_at_utc", manifest["archived_at_utc"])
+            artifact = manifest.get("artifact") or {}
+            if "size_bytes" in artifact:
+                meta.setdefault("size_bytes", artifact["size_bytes"])
+        except (json.JSONDecodeError, OSError):
+            pass
+    return meta
+
+
+@app.get("/jobs")
+def list_jobs(limit: int = 50):
+    """Histórico de engines: active + previous + archives (orden: + reciente primero)."""
+    engines = []
+
+    active_meta = _read_engine_meta(ACTIVE_ENGINE_META) or {}
+    if active_meta and ACTIVE_ENGINE.exists():
+        engines.append(_engine_summary(
+            active_meta, status="active", engine_path=ACTIVE_ENGINE,
+            archive_id=None, can_rollback_to=False,
+        ))
+
+    previous_meta = _read_engine_meta(PREVIOUS_ENGINE_META) or {}
+    if previous_meta and PREVIOUS_ENGINE.exists():
+        engines.append(_engine_summary(
+            previous_meta, status="previous", engine_path=PREVIOUS_ENGINE,
+            archive_id=None, can_rollback_to=True,
+        ))
+
+    if ENGINES_ARCHIVE_DIR.exists():
+        # sort desc por nombre (los names son timestamps ISO compactos)
+        archives = sorted(
+            [d for d in ENGINES_ARCHIVE_DIR.iterdir() if d.is_dir()],
+            reverse=True,
+        )
+        for archive in archives:
+            engine_bin = archive / "best_fp16.engine"
+            meta = _load_archive_meta(archive)
+            engines.append(_engine_summary(
+                meta, status="archived", engine_path=engine_bin,
+                archive_id=archive.name, can_rollback_to=True,
+            ))
+
+    return {"engines": engines[:limit]}
+
+
+@app.post("/model/rollback-to/{archive_id}")
+def model_rollback_to(archive_id: str):
+    """Restaura un engine arbitrario del histórico. Archiva el active actual
+    antes del swap. Marca el nuevo active con `from_fallback=true` y
+    `rolled_back_from_archive=<archive_id>`."""
+    if not _ARCHIVE_ID_RE.match(archive_id):
+        raise HTTPException(400, {"ok": False, "error": "invalid_archive_id"})
+    active_job = _read_active_job()
+    if active_job:
+        raise HTTPException(409, {
+            "ok": False, "error": "build_in_progress",
+            "active_job_id": active_job.get("job_id"),
+        })
+    archive = ENGINES_ARCHIVE_DIR / archive_id
+    src_engine = archive / "best_fp16.engine"
+    src_meta = archive / "best_fp16.engine.meta.json"
+    if not (archive.is_dir() and src_engine.exists()):
+        raise HTTPException(404, {"ok": False, "error": "archive_not_found"})
+
+    # 1) Archivar el active actual ANTES del swap (no perdemos engines).
+    new_archive_id = None
+    if ACTIVE_ENGINE.exists():
+        active_sha_full = _sha256_file(ACTIVE_ENGINE)
+        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        new_archive_id = "{}__{}".format(ts, active_sha_full[:8])
+        new_archive_dir = ENGINES_ARCHIVE_DIR / new_archive_id
+        new_archive_dir.mkdir(parents=True, exist_ok=True)
+        archived_engine = new_archive_dir / "best_fp16.engine"
+        if not archived_engine.exists():
+            shutil.copy2(str(ACTIVE_ENGINE), str(archived_engine))
+        if ACTIVE_ENGINE_META.exists():
+            shutil.copy2(
+                str(ACTIVE_ENGINE_META),
+                str(new_archive_dir / "best_fp16.engine.meta.json"),
+            )
+
+    # 2) Preparar nuevo active en tmp (atomic via rename después).
+    tmp_engine = ACTIVE_ENGINE.parent / (ACTIVE_ENGINE.name + ".rollback_tmp")
+    tmp_meta = ACTIVE_ENGINE_META.parent / (ACTIVE_ENGINE_META.name + ".rollback_tmp")
+    shutil.copy2(str(src_engine), str(tmp_engine))
+    if src_meta.exists():
+        new_meta = json.loads(src_meta.read_text())
+    else:
+        new_meta = {"engine_sha256": _sha256_file(src_engine)}
+    new_meta["from_fallback"] = True
+    new_meta["rolled_back_from_archive"] = archive_id
+    new_meta["rolled_back_at"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    tmp_meta.write_text(json.dumps(new_meta, indent=2))
+
+    # 3) Liberar worker antes de swap (libera GPU buffers para evitar conflictos).
+    if worker.is_engine_loaded():
+        worker.request_release()
+        deadline = time.time() + 5.0
+        while time.time() < deadline and worker.is_engine_loaded():
+            time.sleep(0.1)
+
+    # 4) Swap atómico.
+    tmp_engine.replace(ACTIVE_ENGINE)
+    tmp_meta.replace(ACTIVE_ENGINE_META)
+
+    # 5) Reload worker.
+    worker.request_swap(str(ACTIVE_ENGINE))
+    deadline = time.time() + 30.0
+    while time.time() < deadline:
+        if worker.is_engine_loaded():
+            break
+        time.sleep(0.1)
+
+    return {
+        "ok": True,
+        "phase": "rolled_back_to",
+        "archive_id": archive_id,
+        "previous_archived_as": new_archive_id,
+    }
 
 
 @app.post("/model/check-updates")

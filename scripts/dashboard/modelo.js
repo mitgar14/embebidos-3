@@ -317,7 +317,9 @@
 
       <section class="side-card">
         <h3>Histórico</h3>
-        <p class="hint">Últimos jobs (próximamente)</p>
+        <ul id="hist-list" class="hist-list" aria-busy="true">
+          <li class="hint">cargando…</li>
+        </ul>
       </section>
     `;
     const sb = document.getElementById('btn-side-check');
@@ -326,6 +328,105 @@
     if (fb) fb.onclick = () => triggerBuild(true, fb);
     const rb = document.getElementById('btn-side-rollback');
     if (rb && !rb.disabled) rb.onclick = () => rollback(rb);
+    fetchAndRenderHistorico();
+  }
+
+  // ---------- Histórico de engines ------------------------------------------
+  // Render-only: GET /jobs ya unifica active + previous + archives.
+  // Cada fila ofrece "revertir" excepto el active actual.
+  async function fetchAndRenderHistorico() {
+    const root = document.getElementById('hist-list');
+    if (!root) return;
+    try {
+      const r = await fetch(api('/jobs?limit=20'));
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      const engines = (data && data.engines) || [];
+      if (!engines.length) {
+        root.innerHTML = '<li class="hint">Sin engines registrados</li>';
+        root.removeAttribute('aria-busy');
+        return;
+      }
+      root.innerHTML = engines.map(_histRowHTML).join('');
+      root.removeAttribute('aria-busy');
+      // wire botones revertir
+      root.querySelectorAll('button[data-archive]').forEach(btn => {
+        btn.onclick = () => rollbackToArchive(btn.dataset.archive, btn);
+      });
+    } catch (e) {
+      root.innerHTML = `<li class="meta-empty">no se pudo cargar (${e.message})</li>`;
+      root.removeAttribute('aria-busy');
+    }
+  }
+
+  function _histRowHTML(j) {
+    const eng = j.engine_sha256_short || '—';
+    const rev = j.hf_revision_short || '—';
+    const dur = j.build_duration_s ? Math.round(j.build_duration_s) + ' s' : null;
+    const when = j.build_completed_at ? _fmtRelative(j.build_completed_at) : '';
+    const isoTitle = j.build_completed_at || '';
+    const badge = {
+      active: '<span class="pill pill-on" title="engine cargado en GPU">activo</span>',
+      previous: '<span class="pill pill-warn" title="último backup .previous (rollback 1-click)">previous</span>',
+      archived: '<span class="pill pill-ghost" title="archive histórico en disco">archive</span>',
+    }[j.status] || '';
+    const flags = [];
+    if (j.adopted) flags.push('<span class="pill pill-ghost" title="meta retroactivo">ADOPTADO</span>');
+    if (j.from_fallback) flags.push('<span class="pill pill-warn" title="proviene de rollback">fallback</span>');
+    let action = '';
+    if (j.can_rollback_to) {
+      const ref = j.status === 'previous' ? '__previous__' : (j.archive_id || '');
+      action = `<button class="ghost xs" data-archive="${ref}" title="Restaurar este engine como activo">revertir</button>`;
+    }
+    return `
+      <li class="hist-row">
+        <div class="hist-line">
+          ${badge}
+          <span class="mono small" title="engine sha256 (12)">eng:${eng}</span>
+          <span class="mono small" title="HF revision (7)">rev:${rev}</span>
+          ${flags.join('')}
+        </div>
+        <div class="hist-foot">
+          <span class="hint" ${isoTitle ? `title="${isoTitle}"` : ''}>${when || '—'}${dur ? ' · ' + dur : ''}</span>
+          ${action}
+        </div>
+      </li>`;
+  }
+
+  async function rollbackToArchive(ref, btn) {
+    const isPrevious = ref === '__previous__';
+    const ok = await window.openModal({
+      title: isPrevious ? 'Revertir al engine anterior' : 'Revertir a engine archivado',
+      body: isPrevious
+        ? 'Esto restaura el .engine y .meta.json del backup .previous.'
+        : `Esto restaura el engine archivado ${ref}. El active actual se archivará automáticamente antes del swap (no se pierde).`,
+      confirmText: 'revertir',
+      cancelText: 'cancelar',
+      danger: true,
+    });
+    if (!ok) return;
+    await window.withButtonLoading(btn, 'revirtiendo…', async () => {
+      try {
+        const url = isPrevious
+          ? api('/model/rollback')
+          : api(`/model/rollback-to/${encodeURIComponent(ref)}`);
+        const r = await fetch(url, { method: 'POST' });
+        const data = await r.json();
+        if (!r.ok || !data.ok) {
+          const err = (data.detail && data.detail.error) || data.error || ('HTTP ' + r.status);
+          window.showToast(err, 'error', { title: 'No se pudo revertir' });
+        } else {
+          const msg = isPrevious
+            ? 'El engine anterior está activo de nuevo.'
+            : `Engine ${ref.split('__')[1] || ref} activo. Active previo archivado.`;
+          window.showToast(msg, 'success', { title: 'Rollback completo' });
+        }
+        fetchState();
+        fetchAndRenderHistorico();
+      } catch (e) {
+        window.showToast(e.message, 'error', { title: 'Error de red' });
+      }
+    });
   }
 
   async function adoptEngine(btn) {
