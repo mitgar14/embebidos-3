@@ -303,7 +303,7 @@
       <section class="side-card">
         <h3>HF Hub</h3>
         <dl class="kv">
-          <dt>Repo</dt><dd class="mono small">mitgar14/embebidos-3-models</dd>
+          <dt>Repo</dt><dd class="mono small">${(s.hf && s.hf.repo) || 'mitgar14/embebidos-3-models'}</dd>
           <dt>Revisión activa</dt><dd class="mono">${(m.hf_revision || '—').slice(0,7)}</dd>
         </dl>
         <button id="btn-side-check" class="ghost" title="Consulta HF Hub: compara el SHA256 del ONNX local contra el último publicado.">Verificar ahora</button>

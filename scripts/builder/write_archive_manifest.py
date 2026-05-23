@@ -39,7 +39,7 @@ def build_manifest(archive_dir, engine_path, sha256_hex, size_bytes,
         "source_meta_inline": None,
         "notes": (
             "Backup local-only del engine TRT previo. El manifest se sube a HF "
-            "(repo mitgar14/embebidos-3-models, path engines-archive/<archive_id>/) "
+            "(repo HF configurado, path engines-archive/<archive_id>/) "
             "como índice remoto buscable. El binario permanece en la SD del Nano; "
             "para recuperarlo sin red, leer engines-archive/<archive_id>/ en el Nano."
         ),

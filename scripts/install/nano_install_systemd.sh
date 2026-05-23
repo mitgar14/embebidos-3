@@ -10,8 +10,12 @@ echo "[1/8] crear /etc/embebidos3/"
 sudo mkdir -p /etc/embebidos3
 if [[ ! -f /etc/embebidos3/secrets.env ]]; then
     sudo tee /etc/embebidos3/secrets.env > /dev/null <<'EOF'
-# HF_TOKEN requerido para descargar repo privado mitgar14/embebidos-3-models
+# HF_TOKEN requerido para descargar el repo HF privado.
 HF_TOKEN=hf_REEMPLAZAR
+# EMBEBIDOS3_HF_REPO permite alternar entre experimentos sin redeploy de código
+# (default = mitgar14/embebidos-3-models). Cambiar a v1c, v1d, etc. y luego
+# `sudo systemctl restart embebidos3-server.service`.
+EMBEBIDOS3_HF_REPO=mitgar14/embebidos-3-models
 EMBEBIDOS3_TRTEXEC_WORKSPACE=512
 EOF
     sudo chown root:jetson /etc/embebidos3/secrets.env

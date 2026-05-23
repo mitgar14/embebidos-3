@@ -27,7 +27,9 @@ JOB_STATE_FILE = RUNTIME_DIR / "job.json"
 BUILDER_LOCK_FILE = RUNTIME_DIR / "builder.lock"
 
 # HF Hub
-HF_REPO = "mitgar14/embebidos-3-models"
+# Configurable via env var EMBEBIDOS3_HF_REPO para soportar
+# múltiples experimentos (v1, v1c, v1d, ...) sin redeploy de código.
+HF_REPO = os.environ.get("EMBEBIDOS3_HF_REPO", "mitgar14/embebidos-3-models")
 HF_REVISION_DEFAULT = "main"
 ONNX_REMOTE_PATH = "exports/best.onnx"
 MANIFEST_REMOTE_PATH = "manifests/manifest.json"

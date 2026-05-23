@@ -9,7 +9,7 @@ from typing import Optional, List, Dict
 
 import requests
 
-REPO = "mitgar14/embebidos-3-models"
+REPO = os.environ.get("EMBEBIDOS3_HF_REPO", "mitgar14/embebidos-3-models")
 BASE = "https://huggingface.co"
 
 

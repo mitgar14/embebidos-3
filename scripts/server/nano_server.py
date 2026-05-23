@@ -54,6 +54,7 @@ from nano_server_constants import (
     ACTIVE_ENGINE, IMGSZ, CLASSES, DEFAULT_CONF, DEFAULT_NMS,
     JOB_STATE_FILE, HEARTBEAT_STALE_SEC,
     ACTIVE_ENGINE_META, PREVIOUS_ENGINE, PREVIOUS_ENGINE_META, JOBS_LOGS_DIR,
+    HF_REPO, HF_REVISION_DEFAULT,
 )
 from pid_utils import is_pid_alive as _is_pid_alive, check_cmdline as _check_cmdline
 from recover_job_state import recover_job_state as _rjs, reconcile_engine_state as _res
@@ -498,6 +499,8 @@ def model_state():
     previous_meta = _read_engine_meta(PREVIOUS_ENGINE_META)
     active_job = _read_active_job()
 
+    hf_info = {"repo": HF_REPO, "revision": HF_REVISION_DEFAULT}
+
     if active_job:
         return {
             "state": "building",
@@ -505,6 +508,7 @@ def model_state():
             "previous_engine": previous_meta,
             "active_job": active_job,
             "engine_binary_present": ACTIVE_ENGINE.exists(),
+            "hf": hf_info,
         }
 
     if ACTIVE_ENGINE.exists() and active_meta:
@@ -515,6 +519,7 @@ def model_state():
             "previous_engine": previous_meta,
             "active_job": None,
             "engine_binary_present": True,
+            "hf": hf_info,
         }
 
     return {
@@ -523,6 +528,7 @@ def model_state():
         "previous_engine": previous_meta,
         "active_job": None,
         "engine_binary_present": ACTIVE_ENGINE.exists(),
+        "hf": hf_info,
     }
 
 
