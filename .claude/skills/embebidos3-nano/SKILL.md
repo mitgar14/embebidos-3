@@ -14,11 +14,13 @@ Convenciones, endpoints y verificaciones para interactuar con el Jetson Nano B01
 | Variable | Valor |
 |---|---|
 | SSH alias | `nano` (definido en `~/.ssh/config`) |
-| Tailscale IP | `100.100.166.120` |
+| IP Headscale | `100.64.0.2` |
 | Usuario | `jetson` |
 | Sudo password | `IAEmbebidos` |
-| Server FastAPI/WS | `http://100.100.166.120:8000` |
+| Server FastAPI/WS | `http://100.64.0.2:8000` |
 | ROOT del proyecto | `/home/jetson/embebidos-3` |
+
+> **Control plane propio (migración 2026-05-23):** el Nano ya NO usa Tailscale Inc. (`controlplane.tailscale.com`, bloqueado por el FortiGate de UAO). Ahora se registra contra un **Headscale self-hosted** en `https://80-241-217-130.nip.io` (VPS Contabo de Frevalle). La IP vieja `100.100.166.120` quedó obsoleta. El acceso SSH es **por llave `~/.ssh/id_ed25519`** (ya no por Tailscale SSH). Detalle del deploy: `investigaciones/2026-05-23-headscale-deploy.md`.
 
 Para sudo en SSH, usá `ssh -tt nano "echo 'IAEmbebidos' | sudo -S -p '' COMMAND"` (TTY forzado evita "sudo: a password is required").
 
@@ -30,8 +32,8 @@ ssh nano "systemctl is-active embebidos3-server.service"
 ssh nano "echo 'IAEmbebidos' | sudo -S -p '' systemctl list-units 'embebidos3-builder@*.service' --all --no-pager"
 
 # Estado del modelo
-curl -s http://100.100.166.120:8000/model/state | python -m json.tool
-curl -s -X POST http://100.100.166.120:8000/model/check-updates | python -m json.tool
+curl -s http://100.64.0.2:8000/model/state | python -m json.tool
+curl -s -X POST http://100.64.0.2:8000/model/check-updates | python -m json.tool
 
 # Filesystem (engine y meta)
 ssh nano "ls -la /home/jetson/embebidos-3/engines/ /run/embebidos3/ 2>&1"

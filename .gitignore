@@ -29,6 +29,10 @@ exports/
 .env.*
 !.env.example
 
+# Skill de deploy al VPS Frevalle — contiene llave privada SSH (frevalle_deploy). NO versionar.
+.claude/skills/frevalle-vps-extracted/
+.claude/skills/frevalle-vps-skill.zip
+
 # Artefactos de modelos pesados (persistir en HF Hub, no en git)
 *.tflite
 *.engine
