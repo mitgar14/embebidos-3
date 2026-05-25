@@ -159,7 +159,17 @@ export function Placeholder() {
     <div class="min-h-screen bg-bg-app flex flex-col">
       {/* Barra superior (chrome): marca a la izquierda, estado del Nano + tema a la derecha */}
       <header class="flex items-center justify-between border-b border-border px-6 h-14">
-        <span class="font-semibold text-text-primary">Tiny Trash</span>
+        <span class="flex items-center gap-2 font-semibold text-text-primary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-accent" aria-hidden="true">
+            <path d="M3 6h18" />
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            <line x1="10" x2="10" y1="11" y2="17" />
+            <line x1="14" x2="14" y1="11" y2="17" />
+          </svg>
+          Tiny Trash
+        </span>
         <div class="flex items-center gap-4">
           <NanoStatus />
           <ThemeToggle />
