@@ -21,8 +21,18 @@ import { StatusDot } from '../components/StatusDot';
 import { ws, wsStatus } from '../stores/wsStore';
 import { gpuTempC, ramMb } from '../stores/nanoStore';
 import { drawDetections, exportSnapshot, WONG, type BBox, type DetectionMsg } from '../lib/detection';
+import { LocalCameraClient, type LocalFrameMsg } from '../lib/localCamera';
 
 type CamState = 'idle' | 'starting' | 'live' | 'error';
+type Source = 'remota' | 'local';
+type LocalState = 'idle' | 'connecting' | 'live' | 'error';
+
+// Mensajes claros para cada codigo de error del modo local del Nano.
+const LOCAL_ERRORS: Record<string, string> = {
+  camera_open_failed: 'La cámara del Nano no está disponible (en uso o desconectada).',
+  local_busy:         'Otra sesión ya está usando la cámara local del Nano.',
+  ws_error:           'No se pudo conectar al modo local del Nano.',
+};
 
 const CONN_LABELS: Record<string, string> = {
   connecting:   'conectando',
@@ -65,12 +75,20 @@ export default function Dashboard() {
   // ── Refs y contexto de canvas ──────────────────────────────────────────────
   let videoEl!: HTMLVideoElement;
   let overlayEl!: HTMLCanvasElement;
+  let frameEl!: HTMLCanvasElement;          // modo local: aqui se pinta el frame del Nano
   let deviceSelectEl!: HTMLSelectElement;
   const captureCanvas = document.createElement('canvas');
   const captureCtx = captureCanvas.getContext('2d')!;
   let overlayCtx: CanvasRenderingContext2D | null = null;
+  let frameCtx: CanvasRenderingContext2D | null = null;   // contexto del canvas del frame local
 
   // ── Estado reactivo (UI) ─────────────────────────────────────────────────────
+  // Fuente de cámara: un solo modo activo a la vez (CAM-01). Por defecto 'remota'
+  // para no cambiar el comportamiento actual al montar.
+  const [source, setSource]                 = createSignal<Source>('remota');
+  const [localState, setLocalState]         = createSignal<LocalState>('idle');
+  const [localError, setLocalError]         = createSignal('');
+
   const [camState, setCamState]             = createSignal<CamState>('idle');
   const [devices, setDevices]               = createSignal<MediaDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = createSignal('');
@@ -113,6 +131,13 @@ export default function Dashboard() {
   let sendTimestamps: number[] = [];
   let fpsWindow: number[] = [];
   const counts = { glass: 0, paper: 0, plastic: 0 };
+
+  // ── Modo local (no reactivo) ─────────────────────────────────────────────────
+  // El cliente WS local y las dims reales del frame recibido del Nano. NO se
+  // hardcodea un tamaño cuadrado: el frame es 640x480 (4:3) y el canvas se
+  // dimensiona al primer frame con bitmap.width/bitmap.height (sin aplastar).
+  let localClient: LocalCameraClient | null = null;
+  let frameW = 0, frameH = 0;
 
   // ── WebSocket: control + recepción de detecciones ────────────────────────────
   function sendConf() {
@@ -171,6 +196,104 @@ export default function Dashboard() {
     setFramesProcessed(totalFrames);
     if (dets.length) { setCGlass(counts.glass); setCPaper(counts.paper); setCPlastic(counts.plastic); }
     setHasDetections(dets.length > 0);
+  }
+
+  // Reinicia las métricas y el overlay (al cambiar de fuente, ambos modos a cero).
+  function resetMetrics() {
+    fpsWindow = []; totalFrames = 0;
+    counts.glass = 0; counts.paper = 0; counts.plastic = 0;
+    setFps(0); setLatencyMs(null); setInferMs(null); setNetMs(null);
+    setDetsCount(0); setFramesProcessed(0);
+    setCGlass(0); setCPaper(0); setCPlastic(0); setHasDetections(false);
+    if (overlayCtx && overlayEl) overlayCtx.clearRect(0, 0, overlayEl.width, overlayEl.height);
+  }
+
+  // ── Modo LOCAL: cámara C920 del Nano por /ws/local ───────────────────────────
+  // No usa getUserMedia: el Nano empuja el frame (JPEG 640x480) + las bboxes y el
+  // Dashboard los pinta. El canvas se dimensiona a las dims REALES del frame
+  // (bitmap.width/bitmap.height), NUNCA a un tamaño fijo, para respetar el 4:3.
+  function startLocal() {
+    setLocalState('connecting');
+    setLocalError('');
+    frameW = 0; frameH = 0;
+    localClient = new LocalCameraClient({
+      onOpen: () => {
+        setLocalState('live');
+        localClient?.setConf(confPct() / 100);     // sincroniza la certeza actual
+      },
+      onFrame: (bitmap: ImageBitmap, msg: LocalFrameMsg) => {
+        if (source() !== 'local') { bitmap.close(); return; }   // llegó tras cambiar de fuente
+        // Primer frame (o cambio de dims): dimensionar canvas del frame y overlay a
+        // las dims reales del bitmap y fijar el aspect-ratio del contenedor (4:3).
+        if (bitmap.width !== frameW || bitmap.height !== frameH) {
+          frameW = bitmap.width; frameH = bitmap.height;
+          frameEl.width = frameW; frameEl.height = frameH;
+          overlayEl.width = frameW; overlayEl.height = frameH;
+          setFrameSize(`${frameW} × ${frameH}`);
+          setAspect(`${frameW} / ${frameH}`);
+        }
+        if (frameCtx) frameCtx.drawImage(bitmap, 0, 0, frameW, frameH);
+        bitmap.close();                              // liberar el bitmap tras dibujarlo (sin fuga)
+
+        const dets: BBox[] = msg.bboxes ?? [];
+        // Overlay a las dims reales del frame (frameW/frameH), nunca a un tamaño fijo.
+        if (overlayCtx) drawDetections(overlayCtx, frameW, frameH, dets, true);
+
+        const now = performance.now();
+        fpsWindow.push(now);
+        fpsWindow = fpsWindow.filter((t) => now - t < 1000);
+        totalFrames++;
+        for (const d of dets) {
+          if (d.cls_name === 'glass') counts.glass++;
+          else if (d.cls_name === 'paper') counts.paper++;
+          else if (d.cls_name === 'plastic') counts.plastic++;
+        }
+        setFps(fpsWindow.length);
+        setInferMs(msg.t_infer_ms ?? null);
+        setDetsCount(dets.length);
+        setFramesProcessed(totalFrames);
+        if (dets.length) { setCGlass(counts.glass); setCPaper(counts.paper); setCPlastic(counts.plastic); }
+        setHasDetections(dets.length > 0);
+        // En local no hay envío de frame del cliente: Retardo/Transferencia no aplican.
+        setLatencyMs(null); setNetMs(null);
+      },
+      onError: (err: string) => {
+        setLocalState('error');
+        setLocalError(LOCAL_ERRORS[err] ?? LOCAL_ERRORS.ws_error);
+      },
+      onClose: () => {
+        // Cierre no intencional (el close() intencional silencia este callback). El
+        // modo local es bajo demanda: no reconectamos. Si seguimos en local y no
+        // estábamos ya en error, volvemos a 'idle'.
+        if (source() === 'local' && localState() !== 'error') setLocalState('idle');
+      },
+    });
+    localClient.connect();
+  }
+
+  function stopLocal() {
+    localClient?.close();
+    localClient = null;
+    setLocalState('idle');
+    setLocalError('');
+    frameW = 0; frameH = 0;
+    if (frameCtx && frameEl) frameCtx.clearRect(0, 0, frameEl.width, frameEl.height);
+    if (overlayCtx && overlayEl) overlayCtx.clearRect(0, 0, overlayEl.width, overlayEl.height);
+  }
+
+  // Cambio de fuente: cierra el modo saliente ANTES de abrir el entrante (un solo
+  // modo activo, CAM-01). Salir de 'local' cierra /ws/local -> el Nano libera la
+  // cámara (CAM-04). Salir de 'remota' detiene la webcam del navegador.
+  function changeSource(next: Source) {
+    if (next === source()) return;
+    if (source() === 'remota') stopCam();
+    else stopLocal();
+    setSource(next);
+    resetMetrics();
+    setFrameSize('');
+    setAspect('4 / 3');
+    if (next === 'local') startLocal();
+    else bootRemote();
   }
 
   // ── Cámara ────────────────────────────────────────────────────────────────────
@@ -327,8 +450,38 @@ export default function Dashboard() {
   }
 
   // ── Controles ────────────────────────────────────────────────────────────────
-  function onConf(pct: number) { setConfPct(pct); sendConf(); }
-  function onSnapshot() { if (isLive()) exportSnapshot(videoEl, overlayEl, true); }
+  // La certeza viaja por el WS de la fuente activa: en local por el cliente local,
+  // en remota por el ws global (sendConf).
+  function onConf(pct: number) {
+    setConfPct(pct);
+    if (source() === 'local') localClient?.setConf(pct / 100);
+    else sendConf();
+  }
+
+  // Snapshot PNG. En remota el frame está en el <video>; en local está en el canvas
+  // del frame, así que componemos el PNG desde ese canvas + el overlay.
+  function onSnapshot() {
+    if (source() === 'remota') {
+      if (isLive()) exportSnapshot(videoEl, overlayEl, true);
+      return;
+    }
+    if (localState() !== 'live' || !frameW || !frameH) return;
+    const out = document.createElement('canvas');
+    out.width = frameW; out.height = frameH;
+    const octx = out.getContext('2d');
+    if (!octx) return;
+    octx.drawImage(frameEl, 0, 0, frameW, frameH);
+    octx.drawImage(overlayEl, 0, 0, frameW, frameH);
+    out.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `snapshot-${Date.now()}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }, 'image/png');
+  }
 
   // Re-afirma el valor del <select> cuando cambian las opciones: si <For>
   // reconstruye las <option>, el navegador puede resetear la selección visible
@@ -339,13 +492,10 @@ export default function Dashboard() {
     if (deviceSelectEl && deviceSelectEl.value !== v) deviceSelectEl.value = v;
   });
 
-  // ── Ciclo de vida ─────────────────────────────────────────────────────────────
-  onMount(async () => {
-    overlayCtx = overlayEl.getContext('2d');
-    videoEl.muted = true;                            // requisito de autoplay
-    ws.addEventListener('open', onOpen);
-    ws.addEventListener('message', onMessage);
-    if (ws.readyState === WebSocket.OPEN) sendConf();
+  // ── Arranque del modo REMOTO (reutilizado por onMount y changeSource) ─────────
+  // Enumera cámaras y arranca la webcam del navegador según el permiso. Mismo
+  // camino que usaba onMount; extraído para que volver a 'remota' lo reaproveche.
+  async function bootRemote() {
     await enumerateCams().catch(() => {});           // primer listado (sin labels hasta dar permiso)
     if (!selectedDevice() && devices().length) setSelectedDevice(devices()[0].deviceId);
 
@@ -354,11 +504,16 @@ export default function Dashboard() {
     // startCam(false) detecta el NotAllowedError y arma el arranque por gesto, de
     // modo que la PRIMERA interacción en la página abre la cámara (sin cazar un
     // botón). Si el permiso está bloqueado, mostramos cómo habilitarlo.
-    permStatus = await queryCamPermission();
-    if (permStatus) {
-      permStatus.onchange = () => {
-        if (permStatus?.state === 'granted' && !isLive() && !starting && !disposed) void startCam(false);
-      };
+    if (!permStatus) {
+      permStatus = await queryCamPermission();
+      if (permStatus) {
+        permStatus.onchange = () => {
+          // Solo auto-arranca en modo remota: un cambio de permiso mientras estamos
+          // en local NO debe abrir la webcam del navegador.
+          if (source() === 'remota' && permStatus?.state === 'granted'
+              && !isLive() && !starting && !disposed) void startCam(false);
+        };
+      }
     }
     const state = permStatus?.state ?? 'prompt';
     if (state === 'denied') {
@@ -369,6 +524,17 @@ export default function Dashboard() {
     } else {
       armGestureStart();                              // 'prompt': la 1ª interacción dispara el permiso
     }
+  }
+
+  // ── Ciclo de vida ─────────────────────────────────────────────────────────────
+  onMount(async () => {
+    overlayCtx = overlayEl.getContext('2d');
+    frameCtx = frameEl.getContext('2d');             // canvas del frame del modo local
+    videoEl.muted = true;                            // requisito de autoplay
+    ws.addEventListener('open', onOpen);
+    ws.addEventListener('message', onMessage);
+    if (ws.readyState === WebSocket.OPEN) sendConf();
+    await bootRemote();                              // por defecto arrancamos en 'remota'
   });
 
   onCleanup(() => {
@@ -378,6 +544,7 @@ export default function Dashboard() {
     ws.removeEventListener('open', onOpen);
     ws.removeEventListener('message', onMessage);
     stopCam();
+    stopLocal();                                     // cierra /ws/local -> el Nano libera /dev/video0 (CAM-04)
   });
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -401,57 +568,93 @@ export default function Dashboard() {
       </header>
 
       <div class="flex-1 flex min-h-0">
-        {/* Escenario: video + overlay de detección */}
+        {/* Escenario: video (remota) o frame del Nano (local) + overlay de detección */}
         <section class="flex-1 min-w-0 flex items-center justify-center p-6 relative">
           <div class="relative w-full max-w-3xl rounded-md overflow-hidden bg-bg-surface"
             style={{ 'aspect-ratio': aspect() }}>
+            {/* En remota el frame viene del <video> (getUserMedia); en local del canvas
+                del frame que pinta el JPEG del Nano. El overlay es común a ambos. */}
             <video ref={videoEl} autoplay playsinline muted
-              class="absolute inset-0 w-full h-full object-contain" />
+              class="absolute inset-0 w-full h-full object-contain"
+              classList={{ hidden: source() !== 'remota' }} />
+            <canvas ref={frameEl} class="absolute inset-0 w-full h-full object-contain"
+              classList={{ hidden: source() !== 'local' }} />
             <canvas ref={overlayEl} class="absolute inset-0 w-full h-full object-contain" />
 
-            <Show when={isLive() && !hasDetections()}>
-              <div class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
-                <span class="text-sm text-text-secondary">esperando objetos…</span>
-              </div>
-            </Show>
+            {/* ── Estados del modo REMOTA ── */}
+            <Show when={source() === 'remota'}>
+              <Show when={isLive() && !hasDetections()}>
+                <div class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+                  <span class="text-sm text-text-secondary">esperando objetos…</span>
+                </div>
+              </Show>
 
-            <Show when={camState() === 'starting'}>
-              <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-bg-panel">
-                <Spinner />
-                <span class="text-sm text-text-secondary">Cargando cámara…</span>
-              </div>
-            </Show>
+              <Show when={camState() === 'starting'}>
+                <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-bg-panel">
+                  <Spinner />
+                  <span class="text-sm text-text-secondary">Cargando cámara…</span>
+                </div>
+              </Show>
 
-            <Show when={camState() === 'idle' || camState() === 'error'}>
-              <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-bg-panel">
-                <span class="text-sm text-text-secondary">
-                  {camState() === 'error' ? 'No se pudo abrir la cámara'
-                    : awaitingGesture() ? 'Haz clic para iniciar la cámara'
-                    : everStarted() ? 'Cámara detenida' : 'Activa la cámara'}
-                </span>
-                <Show when={awaitingGesture()}>
-                  <span class="max-w-xs text-center text-xs text-text-secondary opacity-80">
-                    Tu navegador pide una interacción para abrir la cámara.
+              <Show when={camState() === 'idle' || camState() === 'error'}>
+                <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-bg-panel">
+                  <span class="text-sm text-text-secondary">
+                    {camState() === 'error' ? 'No se pudo abrir la cámara'
+                      : awaitingGesture() ? 'Haz clic para iniciar la cámara'
+                      : everStarted() ? 'Cámara detenida' : 'Activa la cámara'}
                   </span>
-                </Show>
-                <Show when={camError()}>
-                  <span class="max-w-xs text-center text-xs text-text-secondary opacity-80">{camError()}</span>
-                </Show>
-                <button class={BTN} onClick={() => startCam(true)}>
-                  {camState() === 'error' ? 'Reintentar' : 'Iniciar cámara'}
-                </button>
-              </div>
+                  <Show when={awaitingGesture()}>
+                    <span class="max-w-xs text-center text-xs text-text-secondary opacity-80">
+                      Tu navegador pide una interacción para abrir la cámara.
+                    </span>
+                  </Show>
+                  <Show when={camError()}>
+                    <span class="max-w-xs text-center text-xs text-text-secondary opacity-80">{camError()}</span>
+                  </Show>
+                  <button class={BTN} onClick={() => startCam(true)}>
+                    {camState() === 'error' ? 'Reintentar' : 'Iniciar cámara'}
+                  </button>
+                </div>
+              </Show>
+
+              <Show when={wsStatus() !== 'active'}>
+                <div class="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2
+                            rounded-md border border-border bg-bg-surface px-3 py-1.5 text-xs text-text-secondary">
+                  <StatusDot status={wsStatus()} />
+                  <span>
+                    {wsStatus() === 'reconnecting' ? 'Reconectando con el Nano…'
+                      : wsStatus() === 'connecting' ? 'Conectando…' : 'Sin conexión con el Nano'}
+                  </span>
+                </div>
+              </Show>
             </Show>
 
-            <Show when={wsStatus() !== 'active'}>
-              <div class="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2
-                          rounded-md border border-border bg-bg-surface px-3 py-1.5 text-xs text-text-secondary">
-                <StatusDot status={wsStatus()} />
-                <span>
-                  {wsStatus() === 'reconnecting' ? 'Reconectando con el Nano…'
-                    : wsStatus() === 'connecting' ? 'Conectando…' : 'Sin conexión con el Nano'}
-                </span>
-              </div>
+            {/* ── Estados del modo LOCAL ── */}
+            <Show when={source() === 'local'}>
+              <Show when={localState() === 'live' && !hasDetections()}>
+                <div class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+                  <span class="text-sm text-text-secondary">esperando objetos…</span>
+                </div>
+              </Show>
+
+              <Show when={localState() === 'connecting'}>
+                <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-bg-panel">
+                  <Spinner />
+                  <span class="text-sm text-text-secondary">Conectando con la cámara del Nano…</span>
+                </div>
+              </Show>
+
+              <Show when={localState() === 'idle' || localState() === 'error'}>
+                <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-bg-panel">
+                  <span class="text-sm text-text-secondary">
+                    {localState() === 'error' ? 'Cámara local no disponible' : 'Modo local detenido'}
+                  </span>
+                  <Show when={localError()}>
+                    <span class="max-w-xs text-center text-xs text-text-secondary opacity-80">{localError()}</span>
+                  </Show>
+                  <button class={BTN} onClick={startLocal}>Reintentar</button>
+                </div>
+              </Show>
             </Show>
           </div>
         </section>
@@ -459,18 +662,54 @@ export default function Dashboard() {
         {/* Panel lateral: controles + métricas */}
         <aside class="w-80 shrink-0 border-l border-border bg-bg-panel overflow-y-auto">
           <Section title="Cámara" icon={IconCamera}>
-            <label class="block text-xs text-text-secondary mb-1">Dispositivo</label>
-            <select ref={deviceSelectEl} value={selectedDevice()} onChange={(e) => changeDevice(e.currentTarget.value)}
-              class="w-full rounded-md border border-border bg-bg-surface px-2 py-1.5 text-sm text-text-primary">
-              <Show when={devices().length} fallback={<option value="">sin cámaras detectadas</option>}>
-                <For each={devices()}>{(d, i) => <option value={d.deviceId}>{d.label || `cámara ${i() + 1}`}</option>}</For>
-              </Show>
-            </select>
-            <div class="mt-3 flex items-center gap-2">
-              <button class={BTN} disabled={camState() === 'starting' || isLive()} onClick={() => startCam(true)}>Iniciar</button>
-              <button class={BTN_GHOST} disabled={!isLive()} onClick={stopCam}>Detener</button>
-              <span class="ml-auto font-mono text-xs text-text-secondary tabular">{frameSize() || '—'}</span>
+            {/* Selector de fuente: un solo modo activo a la vez (CAM-01). Patrón
+                segmented del sitio (activo: border-accent + bg-accent-bg). */}
+            <label class="block text-xs text-text-secondary mb-1">Fuente</label>
+            <div class="grid grid-cols-2 gap-2">
+              <For each={['remota', 'local'] as Source[]}>
+                {(s) => (
+                  <button type="button" onClick={() => changeSource(s)}
+                    class="rounded-md border px-3 py-1.5 text-sm transition-colors"
+                    classList={{
+                      'border-accent bg-accent-bg text-text-primary': source() === s,
+                      'border-border text-text-secondary hover:text-text-primary hover:border-accent': source() !== s,
+                    }}>
+                    {s === 'remota' ? 'Remota' : 'Local'}
+                  </button>
+                )}
+              </For>
             </div>
+
+            {/* Modo remota: selector de dispositivo + Iniciar/Detener (getUserMedia). */}
+            <Show when={source() === 'remota'}>
+              <label class="block text-xs text-text-secondary mb-1 mt-4">Dispositivo</label>
+              <select ref={deviceSelectEl} value={selectedDevice()} onChange={(e) => changeDevice(e.currentTarget.value)}
+                class="w-full rounded-md border border-border bg-bg-surface px-2 py-1.5 text-sm text-text-primary">
+                <Show when={devices().length} fallback={<option value="">sin cámaras detectadas</option>}>
+                  <For each={devices()}>{(d, i) => <option value={d.deviceId}>{d.label || `cámara ${i() + 1}`}</option>}</For>
+                </Show>
+              </select>
+              <div class="mt-3 flex items-center gap-2">
+                <button class={BTN} disabled={camState() === 'starting' || isLive()} onClick={() => startCam(true)}>Iniciar</button>
+                <button class={BTN_GHOST} disabled={!isLive()} onClick={stopCam}>Detener</button>
+                <span class="ml-auto font-mono text-xs text-text-secondary tabular">{frameSize() || '—'}</span>
+              </div>
+            </Show>
+
+            {/* Modo local: indicador de estado del enlace con el Nano (sin getUserMedia). */}
+            <Show when={source() === 'local'}>
+              <div class="mt-4 flex items-center gap-2 text-sm">
+                <StatusDot status={localState() === 'live' ? 'active'
+                  : localState() === 'connecting' ? 'connecting'
+                  : localState() === 'error' ? 'closed' : 'reconnecting'} />
+                <span class="text-text-secondary">
+                  {localState() === 'live' ? 'En vivo (C920 del Nano)'
+                    : localState() === 'connecting' ? 'Conectando…'
+                    : localState() === 'error' ? 'No disponible' : 'Detenido'}
+                </span>
+                <span class="ml-auto font-mono text-xs text-text-secondary tabular">{frameSize() || '—'}</span>
+              </div>
+            </Show>
           </Section>
 
           <Section title="Inferencia" icon={IconSliders}>
@@ -483,12 +722,17 @@ export default function Dashboard() {
                 <input type="range" min="5" max="95" step="1" value={confPct()}
                   onInput={(e) => onConf(+e.currentTarget.value)} class="w-full accent-accent" />
               </div>
-              <div>
+              {/* Ritmo objetivo: solo modo remota. En local el ritmo lo marca el Nano,
+                  así que el control se deshabilita para no confundir. */}
+              <div classList={{ 'opacity-40': source() === 'local' }}>
                 <div class="flex items-center justify-between mb-1.5">
                   <label class="text-xs text-text-secondary">Ritmo objetivo</label>
-                  <span class="font-mono text-xs text-text-primary tabular">{fpsTarget()}/s</span>
+                  <span class="font-mono text-xs text-text-primary tabular">
+                    {source() === 'local' ? 'auto' : `${fpsTarget()}/s`}
+                  </span>
                 </div>
                 <input type="range" min="2" max="30" step="1" value={fpsTarget()}
+                  disabled={source() === 'local'}
                   onInput={(e) => setFpsTarget(+e.currentTarget.value)} class="w-full accent-accent" />
               </div>
             </div>
@@ -515,7 +759,8 @@ export default function Dashboard() {
 
           <div class="px-4 pb-4">
             <button class={`${BTN} w-full flex items-center justify-center gap-2`}
-              disabled={!isLive()} onClick={onSnapshot}>
+              disabled={source() === 'remota' ? !isLive() : localState() !== 'live'}
+              onClick={onSnapshot}>
               <IconDownload /> Capturar PNG
             </button>
           </div>

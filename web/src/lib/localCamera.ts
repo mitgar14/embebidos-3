@@ -5,7 +5,7 @@
 //   Nano -> cliente, por cada frame DOS mensajes contiguos en orden estricto:
 //     1) BINARIO (ArrayBuffer): bytes JPEG del frame 640x480 NATIVO (4:3, sin squish).
 //     2) TEXTO JSON: {ok:true, bboxes:[...], t_infer_ms:<number>, seq:<number>}.
-//        bboxes en PIXELES del frame 640x480 (no normalizadas, no 416).
+//        bboxes en PIXELES del frame 640x480 (no normalizadas, no en el cuadrado de inferencia).
 //   Cliente -> Nano (opcional): texto {type:"conf", value:0..1}.
 //   Errores Nano -> cliente (texto JSON, luego el Nano cierra el WS):
 //     {ok:false, error:"camera_open_failed"}   la camara no abrio
