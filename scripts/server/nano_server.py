@@ -99,6 +99,12 @@ class TRTWorker(threading.Thread):
         self._dev_in = self._dev_out = None
         self._bindings = []
         self._in_shape = self._out_shape = None
+        # Hook de modo local (06-02): callable opcional (result_dict, frame_ndarray) -> None.
+        # En modo local (item con loop/future None) el resultado de la inferencia no se
+        # espera con await; si este hook está asignado se invoca con el dict de resultado
+        # y el frame ORIGINAL 640x480 capturado (NO el letterboxed 416). 06-02 conecta
+        # aquí el transporte WS de streaming y codifica ese frame original a JPEG.
+        self.on_local_result = None
 
     def set_conf(self, v: float) -> None:
         with self._lock:
@@ -120,7 +126,20 @@ class TRTWorker(threading.Thread):
             }
 
     def submit(self, item: tuple) -> bool:
-        """item = (jpeg_bytes, client_ts_ms, seq, future_obj). True si encoló."""
+        """Encola un item de inferencia. Aridad fija de 5: (payload, ts_ms, seq, loop, future).
+
+        Modo REMOTO (handler /ws): payload es ``bytes`` (JPEG sin decodificar),
+          ts_ms es t_recv_ms, y loop/future son el event loop y el future del
+          handler asyncio para devolver el resultado por el WebSocket.
+          item = (jpeg_bytes, client_ts_ms, seq, loop, future).
+        Modo LOCAL (cam-reader del Nano, 06-01): payload es un ``np.ndarray`` BGR
+          640x480 nativo ya decodificado, ts_ms es el timestamp de captura, y
+          loop/future son ``None`` (el resultado no se espera con await; sale por
+          el hook on_local_result que conecta 06-02).
+          item = (frame_ndarray, capture_ts_ms, seq_local, None, None).
+
+        Devuelve True si encoló, False si la cola está llena (drop del frame).
+        """
         try:
             self.in_q.put_nowait(item)
             return True
@@ -305,25 +324,40 @@ class TRTWorker(threading.Thread):
                 if item is None:
                     break
 
-                jpeg_bytes, client_ts_ms, seq, loop, future = item
+                # Aridad fija de 5 para ambos modos. payload bifurca el modo:
+                #   bytes      -> modo remoto (JPEG por /ws), loop/future válidos.
+                #   np.ndarray -> modo local (frame BGR 640x480 ya decodificado),
+                #                 loop/future None (resultado por on_local_result).
+                payload, ts_ms, seq, loop, future = item
 
                 # Engine descargado (build en curso o swap pendiente): respondemos
                 # rápido sin tocar GPU para que el WS no acumule frames colgados.
                 if not self._engine_loaded.is_set():
                     err_result = {"ok": False, "error": "engine_unavailable",
                                   "reason": "building_or_standby", "seq": seq}
-                    try:
-                        loop.call_soon_threadsafe(future.set_result, err_result)
-                    except Exception:
+                    if future is not None and loop is not None:
+                        # Modo remoto: devolver el error por el future del handler.
+                        try:
+                            loop.call_soon_threadsafe(future.set_result, err_result)
+                        except Exception:
+                            pass
+                    else:
+                        # Modo local: aún no hay cliente esperando; descartar en silencio.
                         pass
                     continue
 
                 t_start = time.perf_counter()
                 try:
-                    arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
-                    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                    if img is None:
-                        raise RuntimeError("imdecode failed")
+                    if isinstance(payload, (bytes, bytearray)):
+                        # Modo remoto: decodificar el JPEG recibido por el WebSocket.
+                        arr = np.frombuffer(payload, dtype=np.uint8)
+                        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                        if img is None:
+                            raise RuntimeError("imdecode failed")
+                    else:
+                        # Modo local: payload ya es un np.ndarray BGR HxWx3 (640x480
+                        # nativo). Se salta imdecode por completo y se usa directo.
+                        img = payload
                     oh, ow = img.shape[:2]
                     lb, r, dx, dy = self._letterbox(img)
                     rgb = cv2.cvtColor(lb, cv2.COLOR_BGR2RGB)
@@ -353,16 +387,28 @@ class TRTWorker(threading.Thread):
                         "ok": True,
                         "bboxes": dets,
                         "t_infer_ms": round(t_infer_ms, 2),
-                        "client_ts_ms": client_ts_ms,
+                        "client_ts_ms": ts_ms,
                         "seq": seq,
                     }
                 except Exception as e:
                     result = {"ok": False, "error": str(e), "seq": seq}
 
-                try:
-                    loop.call_soon_threadsafe(future.set_result, result)
-                except Exception:
-                    pass
+                if future is not None and loop is not None:
+                    # Modo remoto: el handler /ws espera el resultado con await.
+                    try:
+                        loop.call_soon_threadsafe(future.set_result, result)
+                    except Exception:
+                        pass
+                else:
+                    # Modo local: entregar al hook de streaming con el frame ORIGINAL
+                    # 640x480 (img, NO el letterboxed 416). 06-02 conecta el hook y
+                    # codifica ese frame a JPEG para los clientes. Si no hay hook,
+                    # descartar el resultado en silencio. Nunca propagar excepciones.
+                    if self.on_local_result is not None:
+                        try:
+                            self.on_local_result(result, img)
+                        except Exception:
+                            pass
         finally:
             try:
                 cu_ctx.push()
