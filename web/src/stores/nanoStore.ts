@@ -21,14 +21,19 @@ export const [lastMessageAt, setLastMessageAt] = createSignal<number | null>(nul
 // Cada mensaje no-pong del WS es un frame/detección: marca la última inferencia.
 ws.addEventListener('message', () => setLastMessageAt(Date.now()));
 
-/** Deriva la URL HTTP de /health desde la URL WS configurada (ws->http, wss->https). */
-function healthUrl(): string {
+/** URL base HTTP del Nano derivada de la URL WS configurada (ws->http, wss->https, sin /ws). */
+export function nanoHttpBase(): string {
   try {
     const u = new URL(getWsUrl());
-    return `${u.protocol === 'wss:' ? 'https:' : 'http:'}//${u.host}/health`;
+    return `${u.protocol === 'wss:' ? 'https:' : 'http:'}//${u.host}`;
   } catch {
-    return 'http://100.64.0.2:8000/health';
+    return 'http://100.64.0.2:8000';
   }
+}
+
+/** Deriva la URL HTTP de /health desde la URL WS configurada. */
+function healthUrl(): string {
+  return `${nanoHttpBase()}/health`;
 }
 
 async function probeHealth(): Promise<void> {
