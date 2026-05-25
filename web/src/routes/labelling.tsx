@@ -5,7 +5,7 @@
 // redimensionar cajas, asignar una de las 3 clases (vidrio/papel/plástico) y
 // exportar en formato YOLO (un .txt por imagen + data.yaml) empaquetado en .zip.
 
-import { createSignal, createEffect, onMount, onCleanup, For, Show } from 'solid-js';
+import { createSignal, createEffect, onMount, onCleanup, For, Show, type JSX } from 'solid-js';
 import { A } from '@solidjs/router';
 import JSZip from 'jszip';
 import { ThemeToggle } from '../components/ThemeToggle';
@@ -26,6 +26,12 @@ type Mode = 'idle' | 'draw' | 'move' | 'resize';
 
 const HANDLE = 8;      // lado del tirador, en px de pantalla
 const MIN_BOX = 6;     // caja mínima (px de imagen) para conservarla al soltar
+
+// Cursor de redimensionado por tirador (las diagonales comparten eje).
+const HANDLE_CURSOR: Record<HandleId, string> = {
+  nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize',
+  n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
+};
 
 const BTN = 'rounded-md border border-border px-3 py-1.5 text-sm text-text-primary ' +
   'hover:border-accent hover:bg-bg-surface transition-colors ' +
@@ -73,14 +79,16 @@ function IconInfo() {
 }
 
 // Tooltip informativo: elemento gráfico propio (role=tooltip), NUNCA el title
-// nativo, igual al patrón del hub. Abre hacia arriba para no salirse del panel.
-function InfoTip(props: { text: string }) {
+// nativo, igual al patrón del hub. placement controla si abre hacia arriba
+// (default) o hacia abajo, para no salirse del panel con overflow-y-auto.
+function InfoTip(props: { children: JSX.Element; label?: string; placement?: 'top' | 'bottom'; width?: string }) {
   const [open, setOpen] = createSignal(false);
+  const down = () => props.placement === 'bottom';
   return (
     <span class="relative inline-flex" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
       <button
         type="button"
-        aria-label="Formato de exportación"
+        aria-label={props.label ?? 'Más información'}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         class="flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors"
@@ -90,12 +98,21 @@ function InfoTip(props: { text: string }) {
       <span
         role="tooltip"
         classList={{ 'info-tip-open': open() }}
-        class="info-tip pointer-events-none absolute bottom-full right-0 mb-2 z-30 w-64
-               rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text-secondary leading-relaxed"
+        class={`info-tip ${down() ? 'info-tip-down top-full mt-2' : 'bottom-full mb-2'} pointer-events-none absolute right-0 z-30 ${props.width ?? 'w-64'} rounded-md border border-border bg-bg-panel px-3 py-2.5 text-xs text-text-secondary leading-relaxed`}
       >
-        {props.text}
+        {props.children}
       </span>
     </span>
+  );
+}
+
+// Tecla estilo teclado para los instructivos de atajos.
+function Kbd(props: { children: JSX.Element }) {
+  return (
+    <kbd class="inline-flex items-center justify-center min-w-[1.5rem] h-[1.4rem] px-1.5 rounded
+                border border-border bg-bg-surface font-mono text-[11px] font-medium text-text-primary leading-none">
+      {props.children}
+    </kbd>
   );
 }
 
@@ -112,6 +129,7 @@ export default function Labelling() {
   const [tick, bump]              = createSignal(0, { equals: false }); // refresh manual de listas
   const [exporting, setExporting] = createSignal(false);
   const [dragOver, setDragOver]   = createSignal(false);
+  const [hoverCursor, setHoverCursor] = createSignal('crosshair'); // forma del cursor según la zona
 
   const cur = () => images()[idx()];
   const refresh = () => bump(0);
@@ -231,9 +249,27 @@ export default function Labelling() {
   }
 
   function onPointerMove(e: PointerEvent) {
-    if (mode === 'idle') return;
     const im = cur();
     if (!im) return;
+
+    if (mode === 'idle') {
+      // Feedback de cursor al pasar el mouse (sin arrastrar): tirador de la caja
+      // seleccionada -> redimensionar; cuerpo de cualquier caja -> mover; resto -> crosshair.
+      const p = canvasPos(e);
+      const sel = im.boxes[selected()];
+      if (sel) {
+        const hid = hitHandle(sel, p.x, p.y);
+        if (hid) { setHoverCursor(HANDLE_CURSOR[hid]); return; }
+      }
+      const px = toIx(p.x), py = toIy(p.y);
+      let overBox = false;
+      for (let i = im.boxes.length - 1; i >= 0; i--) {
+        if (inside(im.boxes[i], px, py)) { overBox = true; break; }
+      }
+      setHoverCursor(overBox ? 'move' : 'crosshair');
+      return;
+    }
+
     const b = im.boxes[selected()];
     if (!b) return;
     const c = canvasPos(e);
@@ -296,8 +332,8 @@ export default function Labelling() {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
     if (e.key === 'Delete' || e.key === 'Backspace') {
       if (selected() >= 0) { deleteBox(selected()); e.preventDefault(); }
-    } else if (e.key === 'ArrowRight') { go(1); }
-    else if (e.key === 'ArrowLeft') { go(-1); }
+    } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { go(1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { go(-1); }
     else if (e.key === 'Escape') { setSelected(-1); }
     else if (e.key >= '1' && e.key <= '3') { assignClass(CLASSES[+e.key - 1]); }
   }
@@ -452,7 +488,7 @@ export default function Labelling() {
             <canvas
               ref={canvas}
               class="absolute inset-0 w-full h-full touch-none select-none"
-              classList={{ 'cursor-crosshair': !!cur() }}
+              style={{ cursor: cur() ? hoverCursor() : 'default' }}
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
@@ -507,7 +543,33 @@ export default function Labelling() {
           </div>
 
           <div class="border-b border-border px-4 py-4">
-            <h2 class="mb-3 text-[11px] font-medium uppercase tracking-wider text-text-secondary">Clase activa</h2>
+            <div class="flex items-center justify-between mb-3">
+              <h2 class="text-[11px] font-medium uppercase tracking-wider text-text-secondary">Clase activa</h2>
+              <InfoTip label="Atajos del editor" placement="bottom" width="w-72">
+                <div class="flex flex-col gap-2">
+                  <div class="flex items-center justify-between gap-3">
+                    <span>Dibujar caja</span>
+                    <span class="text-text-primary">arrastrar sobre la imagen</span>
+                  </div>
+                  <div class="flex items-center justify-between gap-3">
+                    <span>Cambiar clase</span>
+                    <span class="flex gap-1"><Kbd>1</Kbd><Kbd>2</Kbd><Kbd>3</Kbd></span>
+                  </div>
+                  <div class="flex items-center justify-between gap-3">
+                    <span>Navegar imágenes</span>
+                    <span class="flex gap-1"><Kbd>A</Kbd><Kbd>D</Kbd><Kbd>←</Kbd><Kbd>→</Kbd></span>
+                  </div>
+                  <div class="flex items-center justify-between gap-3">
+                    <span>Borrar caja</span>
+                    <span class="flex gap-1"><Kbd>Supr</Kbd></span>
+                  </div>
+                  <div class="flex items-center justify-between gap-3">
+                    <span>Deseleccionar</span>
+                    <span class="flex gap-1"><Kbd>Esc</Kbd></span>
+                  </div>
+                </div>
+              </InfoTip>
+            </div>
             <div class="flex flex-col gap-2">
               <For each={CLASSES}>
                 {(c) => (
@@ -525,9 +587,6 @@ export default function Labelling() {
                 )}
               </For>
             </div>
-            <p class="mt-3 text-xs text-text-secondary leading-relaxed">
-              Arrastrá sobre la imagen para dibujar. Tecla 1/2/3 cambia de clase; Supr borra la caja seleccionada.
-            </p>
           </div>
 
           <div class="flex-1 min-h-0 px-4 py-4">
@@ -546,10 +605,10 @@ export default function Labelling() {
                       class="group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors"
                       classList={{ 'bg-bg-surface': i() === selected(), 'hover:bg-bg-surface/60': i() !== selected() }}
                     >
-                      <span class="w-2.5 h-2.5 rounded-sm shrink-0" style={{ 'background-color': WONG[b.cls] }} />
-                      <span class="flex-1 text-sm text-text-primary">{CLASS_LABEL_ES[b.cls]}</span>
+                      <span class="w-2.5 h-2.5 rounded-sm shrink-0" style={{ 'background-color': (tick(), WONG[b.cls]) }} />
+                      <span class="flex-1 text-sm text-text-primary">{(tick(), CLASS_LABEL_ES[b.cls])}</span>
                       <span class="font-mono text-[11px] text-text-secondary tabular">
-                        {Math.round(b.w)}×{Math.round(b.h)}
+                        {(tick(), Math.round(b.w))}×{(tick(), Math.round(b.h))}
                       </span>
                       <button
                         onClick={(e) => { e.stopPropagation(); deleteBox(i()); }}
@@ -568,7 +627,28 @@ export default function Labelling() {
           <div class="border-t border-border px-4 py-4 flex flex-col gap-2">
             <div class="flex items-center justify-between mb-1">
               <h2 class="text-[11px] font-medium uppercase tracking-wider text-text-secondary">Exportar</h2>
-              <InfoTip text="Formato YOLO: class x_center y_center w h normalizado, con data.yaml (clases 0 vidrio, 1 papel, 2 plástico)." />
+              <InfoTip label="Formato de exportación" width="w-72">
+                <div class="flex flex-col gap-2.5">
+                  <div class="flex flex-col gap-1">
+                    <span class="text-text-primary font-medium">Formato YOLO</span>
+                    <code class="block font-mono text-[11px] text-text-primary bg-bg-surface rounded px-2 py-1">
+                      class x_center y_center w h
+                    </code>
+                    <span>Coordenadas normalizadas de 0 a 1, una caja por línea, más un <span class="font-mono text-text-primary">data.yaml</span>.</span>
+                  </div>
+                  <div class="flex flex-col gap-1.5 border-t border-border pt-2.5">
+                    <For each={CLASSES}>
+                      {(c) => (
+                        <div class="flex items-center gap-2">
+                          <span class="w-2.5 h-2.5 rounded-sm shrink-0" style={{ 'background-color': WONG[c] }} />
+                          <span class="font-mono text-text-primary">{CLASS_ID[c]}</span>
+                          <span>{CLASS_LABEL_ES[c]}</span>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </div>
+              </InfoTip>
             </div>
             <button class={BTN_PRIMARY} onClick={exportZip} disabled={!images().length || exporting()}>
               {exporting() ? 'Empaquetando…' : 'Descargar dataset (.zip)'}

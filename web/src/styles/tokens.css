@@ -168,7 +168,13 @@
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+  /* Variante que abre hacia abajo: entra desde arriba, origen pegado al trigger. */
+  .info-tip-down {
+    transform: translateY(-4px) scale(0.98);
+    transform-origin: top right;
+  }
   @media (prefers-reduced-motion: reduce) {
     .info-tip { transition-property: opacity; transform: translateY(0); }
+    .info-tip-down { transform: translateY(0); }
   }
 }
