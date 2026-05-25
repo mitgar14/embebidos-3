@@ -5,6 +5,16 @@
 import { useNavigate } from '@solidjs/router';
 import { theme } from '../lib/theme';
 import { ThemeToggle } from './ThemeToggle';
+import { StatusDot } from './StatusDot';
+import { wsStatus } from '../stores/wsStore';
+
+/** Etiqueta de texto para cada estado WS. */
+const WS_LABELS: Record<string, string> = {
+  connecting:   'conectando',
+  active:       'activa',
+  reconnecting: 'reconectando',
+  closed:       'cerrada',
+};
 
 // Icono de velocímetro para Dashboard
 function DashboardIcon() {
@@ -133,10 +143,21 @@ export function Placeholder() {
           />
         </nav>
 
-        {/* Estado del tema — diagnóstico para el walking skeleton */}
-        <p class="mt-8 font-mono text-sm text-text-secondary tabular">
-          Tema: {theme() === 'dark' ? 'oscuro' : 'claro'}
-        </p>
+        {/* Sección inferior — estado WS + tema (separada por divider) */}
+        <div class="mt-8 pt-6 border-t border-border flex flex-col gap-3">
+          {/* Indicador de conexión WS */}
+          <div class="flex items-center gap-2">
+            <StatusDot status={wsStatus()} />
+            <span class="font-mono text-sm text-text-secondary">
+              WS: {WS_LABELS[wsStatus()] ?? wsStatus()}
+            </span>
+          </div>
+
+          {/* Estado del tema — diagnóstico */}
+          <p class="font-mono text-sm text-text-secondary tabular">
+            Tema: {theme() === 'dark' ? 'oscuro' : 'claro'}
+          </p>
+        </div>
       </main>
     </div>
   );
