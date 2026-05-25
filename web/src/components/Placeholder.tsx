@@ -1,9 +1,9 @@
 // web/src/components/Placeholder.tsx
-// Walking skeleton — demuestra el sistema de diseño dual-theme end-to-end.
+// Walking skeleton: demuestra el sistema de diseño dual-theme end-to-end.
 // Reemplazado en Fase 2 (hub real) y Fases 3-4 (superficies completas).
 
+import { createSignal, onCleanup } from 'solid-js';
 import { useNavigate } from '@solidjs/router';
-import { theme } from '../lib/theme';
 import { ThemeToggle } from './ThemeToggle';
 import { StatusDot } from './StatusDot';
 import { wsStatus } from '../stores/wsStore';
@@ -16,10 +16,28 @@ const WS_LABELS: Record<string, string> = {
   closed:       'cerrada',
 };
 
+// ─── Grupo de tooltips: hover-intent + skip-delay ────────────────────────────
+// El primer tooltip espera OPEN_DELAY (intención real, evita roces accidentales).
+// Mientras el grupo sigue activo, pasar de un tile a otro abre instantáneo.
+const OPEN_DELAY   = 200; // ms antes de mostrar el primer tooltip
+const GROUP_WINDOW = 300; // ms de gracia tras salir para mantener el grupo vivo
+
+const [groupActive, setGroupActive] = createSignal(false);
+let groupResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+function keepGroupActive() {
+  if (groupResetTimer) { clearTimeout(groupResetTimer); groupResetTimer = null; }
+  setGroupActive(true);
+}
+function scheduleGroupReset() {
+  if (groupResetTimer) clearTimeout(groupResetTimer);
+  groupResetTimer = setTimeout(() => setGroupActive(false), GROUP_WINDOW);
+}
+
 // Icono de velocímetro para Dashboard
 function DashboardIcon() {
   return (
-    <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none"
+    <svg aria-hidden="true" width="26" height="26" viewBox="0 0 20 20" fill="none"
       stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
       <path d="M10 2a8 8 0 1 0 4.9 14.2" />
       <path d="M10 10L14 6" />
@@ -31,7 +49,7 @@ function DashboardIcon() {
 // Icono de CPU/chip para Engine del Modelo
 function EngineIcon() {
   return (
-    <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none"
+    <svg aria-hidden="true" width="26" height="26" viewBox="0 0 20 20" fill="none"
       stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
       <rect x="5" y="5" width="10" height="10" rx="1" />
       <line x1="8" y1="5" x2="8" y2="2" />
@@ -49,7 +67,7 @@ function EngineIcon() {
 // Icono de etiqueta/tag para Labelling
 function LabellingIcon() {
   return (
-    <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none"
+    <svg aria-hidden="true" width="26" height="26" viewBox="0 0 20 20" fill="none"
       stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
       <rect x="2" y="2" width="16" height="16" rx="2" />
       <rect x="5" y="6" width="6" height="4" rx="0.5" />
@@ -59,106 +77,140 @@ function LabellingIcon() {
   );
 }
 
-// Icono de chevron derecha
-function ChevronRightIcon() {
-  return (
-    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none"
-      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M6 4l4 4-4 4" />
-    </svg>
-  );
-}
-
-interface NavRowProps {
+interface DestTileProps {
   label: string;
   description: string;
   icon: () => Element;
   path: string;
 }
 
-function NavRow(props: NavRowProps) {
+/**
+ * Cubo de destino: icono arriba, título debajo. La descripción aparece como
+ * tooltip de UI propio (elemento <span role="tooltip">, no el title nativo)
+ * en hover (con delay e intención) y en focus por teclado (inmediato).
+ */
+function DestTile(props: DestTileProps) {
   const navigate = useNavigate();
+  const [open, setOpen]       = createSignal(false);
+  const [instant, setInstant] = createSignal(false);
+  let openTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function showByHover() {
+    if (openTimer) { clearTimeout(openTimer); openTimer = null; }
+    const skip = groupActive();           // grupo activo -> sin delay ni animación
+    setInstant(skip);
+    if (skip) {
+      setOpen(true);
+      keepGroupActive();
+    } else {
+      openTimer = setTimeout(() => {
+        setOpen(true);
+        keepGroupActive();
+      }, OPEN_DELAY);
+    }
+  }
+
+  function showByFocus() {
+    if (openTimer) { clearTimeout(openTimer); openTimer = null; }
+    setInstant(false);                     // teclado: siempre con animación
+    setOpen(true);
+  }
+
+  function hide() {
+    if (openTimer) { clearTimeout(openTimer); openTimer = null; }
+    setOpen(false);
+    scheduleGroupReset();
+  }
+
+  onCleanup(() => { if (openTimer) clearTimeout(openTimer); });
+
   return (
-    <button
-      onClick={() => navigate(props.path)}
-      class="w-full flex items-center gap-4 h-16 px-4 border-b border-border text-left
-             hover:bg-bg-surface transition-colors"
-    >
-      <span class="flex-shrink-0 text-text-secondary">
+    <div class="relative" onMouseEnter={showByHover} onMouseLeave={hide}>
+      <button
+        onClick={() => navigate(props.path)}
+        aria-label={`${props.label}. ${props.description}`}
+        onFocus={showByFocus}
+        onBlur={hide}
+        class="flex flex-col items-center justify-center gap-3 w-44 h-36 rounded-md
+               border border-border text-text-secondary
+               hover:border-accent hover:text-text-primary hover:bg-bg-surface
+               focus-visible:border-accent transition-colors"
+      >
         <props.icon />
+        <span class="text-sm font-semibold text-text-primary">{props.label}</span>
+      </button>
+
+      {/* Tooltip de UI (no nativo). Animación opacity + transform en .tooltip-popup,
+          aislada de la transición global para no sentirse a bajos fps. */}
+      <span
+        role="tooltip"
+        data-instant={instant() ? '' : undefined}
+        classList={{ 'tooltip-open': open() }}
+        class="tooltip-popup pointer-events-none absolute left-1/2 top-full z-20 mt-2
+               whitespace-nowrap rounded-md border border-border bg-bg-panel px-2.5 py-1
+               text-xs text-text-secondary"
+      >
+        {props.description}
       </span>
-      <span class="flex-1 min-w-0">
-        <span class="block text-base font-semibold text-text-primary leading-tight">
-          {props.label}
-        </span>
-        <span class="block text-sm text-text-secondary truncate">
-          {props.description}
-        </span>
-      </span>
-      <span class="flex-shrink-0 text-text-secondary">
-        <ChevronRightIcon />
-      </span>
-    </button>
+    </div>
   );
 }
 
-/** Componente de prueba del walking skeleton — muestra tokens y toggle dual-theme. */
+/** Componente de prueba del walking skeleton: tokens, toggle dual-theme y estado WS. */
 export function Placeholder() {
   return (
-    <div class="min-h-screen bg-bg-app">
-      {/* Barra superior con toggle */}
-      <div class="flex justify-end px-6 pt-6">
-        <ThemeToggle />
-      </div>
+    <div class="min-h-screen bg-bg-app flex flex-col">
+      {/* Barra superior (chrome): marca a la izquierda, estado WS + tema a la derecha */}
+      <header class="flex items-center justify-between border-b border-border px-6 h-14">
+        <span class="font-semibold text-text-primary">Tiny Trash</span>
+        <div class="flex items-center gap-4">
+          <span class="flex items-center gap-2">
+            <StatusDot status={wsStatus()} />
+            <span class="font-mono text-xs text-text-secondary">
+              {WS_LABELS[wsStatus()] ?? wsStatus()}
+            </span>
+          </span>
+          <ThemeToggle />
+        </div>
+      </header>
 
-      {/* Contenido centrado */}
-      <main class="max-w-lg mx-auto py-12 px-6">
-        {/* Encabezado */}
-        <h1 class="text-2xl font-semibold text-text-primary mb-1">
-          embebidos-3 — Consola Web
+      {/* Hero centrado: encabezado, contexto y los tres destinos en fila */}
+      <main class="flex-1 flex flex-col items-center justify-center px-6 text-center">
+        <h1 class="text-2xl font-semibold tracking-tight text-text-primary">
+          Elige una herramienta
         </h1>
-        <p class="text-sm text-text-secondary mb-8">
-          Walking Skeleton — Fase 1
+        <p class="mt-2 max-w-md text-sm text-text-secondary">
+          Clasificador de residuos en tiempo real sobre Jetson Nano.
         </p>
 
-        {/* Navegación: tres filas sin cards, separadas por border-b */}
-        <nav class="border-t border-border">
-          <NavRow
+        <nav class="mt-10 flex flex-wrap items-center justify-center gap-5">
+          <DestTile
             label="Dashboard"
-            description="Video en vivo + overlay de detección a 14 fps"
+            description="Video en vivo y overlay de detección a 14 fps"
             icon={DashboardIcon}
             path="/dashboard"
           />
-          <NavRow
+          <DestTile
             label="Engine del Modelo"
             description="Estado del modelo, build y logs en vivo"
             icon={EngineIcon}
             path="/engine"
           />
-          <NavRow
+          <DestTile
             label="Labelling"
-            description="Anotación de imágenes con drag/resize/export"
+            description="Anotación de imágenes con drag, resize y export"
             icon={LabellingIcon}
             path="/labelling"
           />
         </nav>
-
-        {/* Sección inferior — estado WS + tema (separada por divider) */}
-        <div class="mt-8 pt-6 border-t border-border flex flex-col gap-3">
-          {/* Indicador de conexión WS */}
-          <div class="flex items-center gap-2">
-            <StatusDot status={wsStatus()} />
-            <span class="font-mono text-sm text-text-secondary">
-              WS: {WS_LABELS[wsStatus()] ?? wsStatus()}
-            </span>
-          </div>
-
-          {/* Estado del tema — diagnóstico */}
-          <p class="font-mono text-sm text-text-secondary tabular">
-            Tema: {theme() === 'dark' ? 'oscuro' : 'claro'}
-          </p>
-        </div>
       </main>
+
+      {/* Footer dev (sutil): marca de fase, sin protagonismo */}
+      <footer class="px-6 py-4 text-center">
+        <span class="font-mono text-xs text-text-secondary opacity-70">
+          Fase 1 · Walking skeleton
+        </span>
+      </footer>
     </div>
   );
 }

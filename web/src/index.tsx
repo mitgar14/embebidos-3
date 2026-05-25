@@ -3,12 +3,9 @@ import { render }      from 'solid-js/web';
 import { lazy }        from 'solid-js';
 import { HashRouter, Route } from '@solidjs/router';
 
-// Fuentes self-hosted (fontsource importa el @font-face necesario)
-import '@fontsource/ibm-plex-sans/400.css';
-import '@fontsource/ibm-plex-sans/500.css';
-import '@fontsource/ibm-plex-sans/600.css';
-import '@fontsource/ibm-plex-mono/400.css';
-import '@fontsource/ibm-plex-mono/500.css';
+// Fuentes self-hosted (Geist variable: un import cubre todo el eje de pesos)
+import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-mono';
 import './styles/tokens.css'; // tokens dual-theme
 
 // Rutas lazy — chunks separados de Vite

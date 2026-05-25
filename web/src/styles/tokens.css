@@ -24,9 +24,9 @@
   --color-accent-bg:       var(--accent-bg);
   --color-accent-text:     var(--accent-text);
 
-  /* Tipografía */
-  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', monospace;
+  /* Tipografía — Geist (las que usa Vercel), variable */
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, 'Cascadia Code', monospace;
 
   /* Radios — escala Vercel/Geist */
   --radius-sm:   4px;
@@ -112,5 +112,42 @@
   /* Hover solo en dispositivos con puntero (evita flash en touch) */
   @media (hover: none) {
     :hover { /* nada — los estilos hover no aplican en touch */ }
+  }
+}
+
+/*
+ * Tooltip de UI — transición dedicada que se aísla de la regla * global.
+ * Fix del "se ve a 18 fps": la curva snappy global tenía una cola muy larga
+ * sobre un movimiento de 4px; acá usamos 100ms con un ease-out corto.
+ * La clase (componente) gana en especificidad a la regla * (base).
+ */
+@layer components {
+  .tooltip-popup {
+    opacity: 0;
+    /* translateX(-50%) centra (reemplaza a -translate-x-1/2); translateY + scale
+       dan el sutil "sube desde abajo". transform-origin pegado al trigger. */
+    transform: translate(-50%, 4px) scale(0.97);
+    transform-origin: top center;
+    transition:
+      opacity   100ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 100ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .tooltip-popup.tooltip-open {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+
+  /* Skip-delay: al recorrer tiles del grupo, abre instantáneo (sin animación). */
+  .tooltip-popup[data-instant] {
+    transition-duration: 0ms;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tooltip-popup,
+    .tooltip-popup.tooltip-open {
+      transform: translate(-50%, 0);
+      transition-property: opacity;
+    }
   }
 }
