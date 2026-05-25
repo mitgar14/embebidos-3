@@ -1,20 +1,17 @@
 // web/src/components/Placeholder.tsx
-// Walking skeleton: demuestra el sistema de diseño dual-theme end-to-end.
-// Reemplazado en Fase 2 (hub real) y Fases 3-4 (superficies completas).
+// Hub de inicio (Fase 2): tres destinos navegables + estado del Nano inline.
+// (Las superficies destino se completan en Fases 3-4.)
 
 import { createSignal, onCleanup } from 'solid-js';
 import { useNavigate } from '@solidjs/router';
 import { ThemeToggle } from './ThemeToggle';
-import { StatusDot } from './StatusDot';
-import { wsStatus } from '../stores/wsStore';
+import { NanoStatus } from './NanoStatus';
+import { getWsUrl } from '../lib/ws';
 
-/** Etiqueta de texto para cada estado WS. */
-const WS_LABELS: Record<string, string> = {
-  connecting:   'conectando',
-  active:       'activa',
-  reconnecting: 'reconectando',
-  closed:       'cerrada',
-};
+/** Host del Nano configurado (se muestra discreto en el footer). */
+function nanoTarget(): string {
+  try { return new URL(getWsUrl()).host; } catch { return ''; }
+}
 
 // ─── Grupo de tooltips: hover-intent + skip-delay ────────────────────────────
 // El primer tooltip espera OPEN_DELAY (intención real, evita roces accidentales).
@@ -160,16 +157,11 @@ function DestTile(props: DestTileProps) {
 export function Placeholder() {
   return (
     <div class="min-h-screen bg-bg-app flex flex-col">
-      {/* Barra superior (chrome): marca a la izquierda, estado WS + tema a la derecha */}
+      {/* Barra superior (chrome): marca a la izquierda, estado del Nano + tema a la derecha */}
       <header class="flex items-center justify-between border-b border-border px-6 h-14">
         <span class="font-semibold text-text-primary">Tiny Trash</span>
         <div class="flex items-center gap-4">
-          <span class="flex items-center gap-2">
-            <StatusDot status={wsStatus()} />
-            <span class="font-mono text-xs text-text-secondary">
-              {WS_LABELS[wsStatus()] ?? wsStatus()}
-            </span>
-          </span>
+          <NanoStatus />
           <ThemeToggle />
         </div>
       </header>
@@ -205,10 +197,10 @@ export function Placeholder() {
         </nav>
       </main>
 
-      {/* Footer dev (sutil): marca de fase, sin protagonismo */}
+      {/* Footer: a qué Nano apunta la consola, sin protagonismo */}
       <footer class="px-6 py-4 text-center">
         <span class="font-mono text-xs text-text-secondary opacity-70">
-          Fase 1 · Walking skeleton
+          Nano · {nanoTarget()}
         </span>
       </footer>
     </div>
