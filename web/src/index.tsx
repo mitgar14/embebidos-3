@@ -13,6 +13,8 @@ const Hub       = lazy(() => import('./routes/hub'));
 const Dashboard = lazy(() => import('./routes/dashboard'));
 const Engine    = lazy(() => import('./routes/engine'));
 const Labelling = lazy(() => import('./routes/labelling'));
+const Guia      = lazy(() => import('./routes/guia'));
+const Control   = lazy(() => import('./routes/control'));
 
 function App() {
   return (
@@ -21,6 +23,8 @@ function App() {
       <Route path="/dashboard"  component={Dashboard} />
       <Route path="/engine"     component={Engine} />
       <Route path="/labelling"  component={Labelling} />
+      <Route path="/guia"       component={Guia} />
+      <Route path="/control"    component={Control} />
     </HashRouter>
   );
 }

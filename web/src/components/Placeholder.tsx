@@ -31,6 +31,24 @@ function scheduleGroupReset() {
   groupResetTimer = setTimeout(() => setGroupActive(false), GROUP_WINDOW);
 }
 
+// Icono de conector/placa para Guía de conexión
+function GuiaIcon() {
+  return (
+    <svg aria-hidden="true" width="26" height="26" viewBox="0 0 20 20" fill="none"
+      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      {/* Cuerpo de la placa */}
+      <rect x="4" y="6" width="12" height="8" rx="1" />
+      {/* Pines superiores */}
+      <line x1="7" y1="6" x2="7" y2="3" />
+      <line x1="10" y1="6" x2="10" y2="3" />
+      <line x1="13" y1="6" x2="13" y2="3" />
+      {/* Pines inferiores */}
+      <line x1="7" y1="14" x2="7" y2="17" />
+      <line x1="13" y1="14" x2="13" y2="17" />
+    </svg>
+  );
+}
+
 // Icono de velocímetro para Dashboard
 function DashboardIcon() {
   return (
@@ -70,6 +88,23 @@ function LabellingIcon() {
       <rect x="5" y="6" width="6" height="4" rx="0.5" />
       <line x1="5" y1="14" x2="15" y2="14" />
       <line x1="5" y1="11.5" x2="13" y2="11.5" />
+    </svg>
+  );
+}
+
+// Icono de slider/potenciometro para Control de servos
+function ControlIcon() {
+  return (
+    <svg aria-hidden="true" width="26" height="26" viewBox="0 0 20 20" fill="none"
+      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      {/* Riel superior */}
+      <line x1="2" y1="7" x2="18" y2="7" />
+      {/* Circulo deslizante superior */}
+      <circle cx="7" cy="7" r="2.5" />
+      {/* Riel inferior */}
+      <line x1="2" y1="13" x2="18" y2="13" />
+      {/* Circulo deslizante inferior */}
+      <circle cx="13" cy="13" r="2.5" />
     </svg>
   );
 }
@@ -187,6 +222,12 @@ export function Placeholder() {
 
         <nav class="mt-10 flex flex-wrap items-center justify-center gap-5">
           <DestTile
+            label="Guía de conexión"
+            description="Cableado 3D interactivo ESP32, PCA9685 y servos"
+            icon={GuiaIcon}
+            path="/guia"
+          />
+          <DestTile
             label="Dashboard"
             description="Video en vivo y overlay de detección a 14 fps"
             icon={DashboardIcon}
@@ -203,6 +244,12 @@ export function Placeholder() {
             description="Anotación de imágenes con drag, resize y export"
             icon={LabellingIcon}
             path="/labelling"
+          />
+          <DestTile
+            label="Control de servos"
+            description="Mover servos del ESP32 por MQTT en vivo"
+            icon={ControlIcon}
+            path="/control"
           />
         </nav>
       </main>
