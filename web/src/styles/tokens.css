@@ -1,0 +1,116 @@
+/* web/src/styles/tokens.css */
+@import "tailwindcss";
+
+/*
+ * Variante dark: activa cuando data-theme="dark" está en cualquier ancestro.
+ * Tailwind 4 ya no usa darkMode en tailwind.config.js.
+ */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+/*
+ * Tokens semánticos — @theme inline hace que las CSS vars se resuelvan
+ * en runtime (no en build-time), lo que permite que cambien al conmutar data-theme.
+ * Las utilidades Tailwind (bg-app, text-primary, etc.) se generan de estos tokens.
+ */
+@theme inline {
+  --color-bg-app:          var(--bg-app);
+  --color-bg-panel:        var(--bg-panel);
+  --color-bg-surface:      var(--bg-surface);
+  --color-border:          var(--border-color);
+  --color-text-primary:    var(--text-primary);
+  --color-text-secondary:  var(--text-secondary);
+  --color-accent:          var(--accent);
+  --color-accent-hover:    var(--accent-hover);
+  --color-accent-bg:       var(--accent-bg);
+  --color-accent-text:     var(--accent-text);
+
+  /* Tipografía */
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', monospace;
+
+  /* Radios — escala Vercel/Geist */
+  --radius-sm:   4px;
+  --radius-md:   6px;
+  --radius-lg:   12px;
+  --radius-full: 9999px;
+
+  /* Animación — curvas compositor-only */
+  --ease-snappy:   cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-expo: cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+/*
+ * Tema OSCURO (default — primer arranque sin preferencia conocida)
+ */
+[data-theme="dark"], :root {
+  --bg-app:         #111113;  /* Slate dark-1 */
+  --bg-panel:       #18191b;  /* Slate dark-2 */
+  --bg-surface:     #212225;  /* Slate dark-3 */
+  --border-color:   #363a3f;  /* Slate dark-6 */
+  --text-primary:   #edeef0;  /* Slate dark-12 */
+  --text-secondary: #b0b4ba;  /* Slate dark-11 */
+  --accent:         #1192e8;  /* IBM Cyan 50 */
+  --accent-hover:   #0072c3;  /* IBM Cyan 70 */
+  --accent-bg:      #012749;  /* IBM Cyan badge bg */
+  --accent-text:    #82cfff;  /* IBM Cyan text-on-dark */
+}
+
+/*
+ * Tema CLARO
+ * Acento: #0072c3 (IBM Cyan 70, ratio 5.01:1 sobre fondo claro — AA supera)
+ * #1192e8 NO se usa como texto interactivo en light (ratio 3.33:1 — FALLA AA)
+ */
+[data-theme="light"] {
+  --bg-app:         #fcfcfd;  /* Slate light-1 */
+  --bg-panel:       #f9f9fb;  /* Slate light-2 */
+  --bg-surface:     #f0f0f3;  /* Slate light-3 */
+  --border-color:   #d9d9e0;  /* Slate light-6 */
+  --text-primary:   #1c2024;  /* Slate light-12 — 15.98:1 sobre bg-app */
+  --text-secondary: #60646c;  /* Slate light-11 — 5.79:1 sobre bg-app */
+  --accent:         #0072c3;  /* IBM Cyan 70 — 5.01:1 AA OK */
+  --accent-hover:   #005eb8;  /* IBM Cyan darker — 6.38:1 AA OK */
+  --accent-bg:      #dbeafe;  /* Cyan tint claro */
+  --accent-text:    #0072c3;  /* mismo acento sobre bg claro */
+}
+
+/*
+ * Tipografía global — patrones de calidad (Rauno Freiberg / Emil Kowalski)
+ */
+@layer base {
+  html {
+    font-family:         var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering:      optimizeLegibility;
+    background-color:    var(--bg-app);
+    color:               var(--text-primary);
+  }
+
+  /* Datos técnicos tabulares */
+  .tabular { font-variant-numeric: tabular-nums; }
+
+  /* Focus ring Geist — box-shadow ring sobre ring */
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bg-app), 0 0 0 4px var(--accent);
+  }
+
+  /* Animaciones — compositor only */
+  * {
+    transition-property: color, background-color, border-color, box-shadow,
+                         transform, opacity;
+    transition-duration: 150ms;
+    transition-timing-function: var(--ease-snappy);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      transition-duration: 0ms !important;
+      animation-duration:  0ms !important;
+    }
+  }
+
+  /* Hover solo en dispositivos con puntero (evita flash en touch) */
+  @media (hover: none) {
+    :hover { /* nada — los estilos hover no aplican en touch */ }
+  }
+}

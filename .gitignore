@@ -48,6 +48,9 @@ runs/
 outputs/
 mlruns/
 
+# Frontend — web.ps1 genera .run/ con PID file y logs
+.run/
+
 # Sistema operativo
 .DS_Store
 Thumbs.db
