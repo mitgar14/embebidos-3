@@ -98,14 +98,19 @@ export default function Dashboard() {
 
   // ── Reloj de frames (no reactivo, vive con la conexión) ──────────────────────
   const MAX_INFLIGHT = 2;
-  let seqOut = 0, inFlight = 0, lastCaptureTs = 0, totalFrames = 0;
+  let inFlight = 0, lastCaptureTs = 0, totalFrames = 0;
   let rafId: number | null = null;
   let stream: MediaStream | null = null;
   let starting = false;      // guarda reentrancia de startCam
   let disposed = false;      // el componente se desmontó (cancela arranques en curso)
   let permStatus: PermissionStatus | null = null;    // permiso de cámara (si la API existe)
   let gestureHandler: (() => void) | null = null;    // arranque diferido al primer gesto (Brave)
-  const pendingFrames = new Map<number, number>();   // seq -> sendTs
+  // Cola FIFO de timestamps de envío (performance.now()), en orden de envío real.
+  // NO emparejamos por seq: el Nano numera por CONEXIÓN y el cliente por montaje
+  // del componente, así que se desincronizan al navegar (el ws global no se
+  // reabre). El Nano procesa en orden estricto (await future), por lo que el orden
+  // de respuestas coincide con el de envíos y basta un shift() para emparejar.
+  let sendTimestamps: number[] = [];
   let fpsWindow: number[] = [];
   const counts = { glass: 0, paper: 0, plastic: 0 };
 
@@ -118,7 +123,7 @@ export default function Dashboard() {
 
   // En cada (re)conexión el servidor reinicia su contador de frames: resincronizamos.
   function onOpen() {
-    seqOut = 0; inFlight = 0; pendingFrames.clear();
+    inFlight = 0; sendTimestamps = [];
     sendConf();
   }
 
@@ -127,13 +132,18 @@ export default function Dashboard() {
     if (typeof data !== 'string') return;            // el Nano solo manda JSON
     let msg: DetectionMsg & { type?: string };
     try { msg = JSON.parse(data); } catch { return; }
-    if (msg.type === 'conf_ack') return;             // pong ya filtrado por el RWS
-    if (!msg.ok) return;
+    if (msg.type === 'conf_ack') return;             // ack de config (no es un frame)
 
-    const sendTs = pendingFrames.get(msg.seq);
-    if (sendTs !== undefined) pendingFrames.delete(msg.seq);
+    // Toda respuesta de FRAME trae seq numérico (ok:true, o ok:false como
+    // queue_full / engine_unavailable). Cada una consume un envío. El Nano
+    // responde en orden estricto, así que emparejamos por orden FIFO (shift),
+    // no por el número (cliente y Nano numeran distinto). pong/otros no traen seq.
+    if (typeof msg.seq !== 'number') return;
+    const sendTs = sendTimestamps.shift();
     inFlight = Math.max(0, inFlight - 1);
-    if (pendingFrames.size > 60) pendingFrames.clear();  // recuperación de desync
+    if (sendTimestamps.length > 60) sendTimestamps = [];   // desync: reinicia la cola
+
+    if (!msg.ok) return;                             // frame rechazado: slot ya liberado
 
     const now = performance.now();
     fpsWindow.push(now);
@@ -307,10 +317,12 @@ export default function Dashboard() {
     captureCtx.drawImage(videoEl, 0, 0, captureCanvas.width, captureCanvas.height);
     captureCanvas.toBlob((blob) => {
       if (!blob || ws.readyState !== WebSocket.OPEN) return;
-      const seq = ++seqOut;
-      pendingFrames.set(seq, performance.now());
       inFlight++;
-      blob.arrayBuffer().then((buf) => { if (ws.readyState === WebSocket.OPEN) ws.send(buf); });
+      blob.arrayBuffer().then((buf) => {
+        if (ws.readyState !== WebSocket.OPEN) { inFlight = Math.max(0, inFlight - 1); return; }
+        sendTimestamps.push(performance.now());        // mismo orden sincrónico que el envío
+        ws.send(buf);
+      });
     }, 'image/jpeg', 0.7);
   }
 
