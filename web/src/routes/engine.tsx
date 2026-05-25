@@ -31,7 +31,7 @@ const BTN = 'rounded-md border border-border px-3 py-1.5 text-sm text-text-prima
   'disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-transparent';
 const BTN_GHOST = 'rounded-md px-3 py-1.5 text-sm text-text-secondary ' +
   'hover:text-text-primary transition-colors disabled:opacity-40';
-const BTN_PRIMARY = 'rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white ' +
+const BTN_PRIMARY = 'rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-text ' +
   'hover:opacity-90 transition-opacity disabled:opacity-40 disabled:hover:opacity-40';
 
 type EngineMeta = {
@@ -53,7 +53,7 @@ type EngineRow = {
 const STATE_META: Record<string, { label: string; color: string }> = {
   no_model:         { label: 'sin modelo',                color: '#6b7280' },
   ready:            { label: 'listo',                     color: '#16a34a' },
-  building:         { label: 'compilando',                color: '#1192e8' },
+  building:         { label: 'compilando',                color: 'var(--accent)' },
   degraded:         { label: 'degradado',                 color: '#e69f00' },
   update_available: { label: 'actualización disponible',  color: '#e69f00' },
 };
@@ -374,7 +374,7 @@ export default function Engine() {
             }>
               <div class="flex items-center gap-3 mb-4">
                 <span class="inline-flex items-center gap-2 rounded-md px-2.5 py-1 text-sm"
-                  style={{ 'background-color': (STATE_META[st()]?.color ?? '#6b7280') + '22',
+                  style={{ 'background-color': `color-mix(in srgb, ${STATE_META[st()]?.color ?? '#6b7280'} 13%, transparent)`,
                            'color': STATE_META[st()]?.color ?? '#6b7280' }}>
                   <span class="w-2 h-2 rounded-full" classList={{ 'animate-pulse': building() }}
                     style={{ 'background-color': STATE_META[st()]?.color ?? '#6b7280' }} />

@@ -49,16 +49,17 @@
   --border-color:   #363a3f;  /* Slate dark-6 */
   --text-primary:   #edeef0;  /* Slate dark-12 */
   --text-secondary: #b0b4ba;  /* Slate dark-11 */
-  --accent:         #1192e8;  /* IBM Cyan 50 */
-  --accent-hover:   #0072c3;  /* IBM Cyan 70 */
-  --accent-bg:      #012749;  /* IBM Cyan badge bg */
-  --accent-text:    #82cfff;  /* IBM Cyan text-on-dark */
+  --accent:         #ffffff;  /* énfasis = blanco (monocromo, estilo Vercel dark) */
+  --accent-hover:   #d4d4d4;  /* blanco atenuado para hover */
+  --accent-bg:      rgba(255, 255, 255, 0.08);  /* tinte blanco translúcido */
+  --accent-text:    #111113;  /* texto SOBRE el acento blanco = fondo oscuro */
 }
 
 /*
  * Tema CLARO
- * Acento: #0072c3 (IBM Cyan 70, ratio 5.01:1 sobre fondo claro — AA supera)
- * #1192e8 NO se usa como texto interactivo en light (ratio 3.33:1 — FALLA AA)
+ * Énfasis invertido a casi-negro (#1c2024): el blanco del tema oscuro sería
+ * invisible sobre fondo claro, así que el "color de énfasis" se invierte
+ * (patrón monocromo Vercel: blanco en oscuro, negro en claro).
  */
 [data-theme="light"] {
   --bg-app:         #fcfcfd;  /* Slate light-1 */
@@ -67,10 +68,10 @@
   --border-color:   #d9d9e0;  /* Slate light-6 */
   --text-primary:   #1c2024;  /* Slate light-12 — 15.98:1 sobre bg-app */
   --text-secondary: #60646c;  /* Slate light-11 — 5.79:1 sobre bg-app */
-  --accent:         #0072c3;  /* IBM Cyan 70 — 5.01:1 AA OK */
-  --accent-hover:   #005eb8;  /* IBM Cyan darker — 6.38:1 AA OK */
-  --accent-bg:      #dbeafe;  /* Cyan tint claro */
-  --accent-text:    #0072c3;  /* mismo acento sobre bg claro */
+  --accent:         #1c2024;  /* énfasis invertido: casi negro (blanco sería invisible) */
+  --accent-hover:   #000000;  /* negro para hover */
+  --accent-bg:      rgba(28, 32, 36, 0.08);  /* tinte oscuro translúcido */
+  --accent-text:    #ffffff;  /* texto SOBRE el acento oscuro = blanco */
 }
 
 /*
