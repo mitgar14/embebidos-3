@@ -92,6 +92,7 @@ export default function Dashboard() {
   const [cPlastic, setCPlastic] = createSignal(0);
   const [hasDetections, setHasDetections] = createSignal(false);
   const [everStarted, setEverStarted]     = createSignal(false);   // ¿la cámara llegó a estar viva?
+  const [awaitingGesture, setAwaitingGesture] = createSignal(false); // Brave exige un gesto para abrir la cámara
 
   const isLive = () => camState() === 'live';
 
@@ -103,6 +104,7 @@ export default function Dashboard() {
   let starting = false;      // guarda reentrancia de startCam
   let disposed = false;      // el componente se desmontó (cancela arranques en curso)
   let permStatus: PermissionStatus | null = null;    // permiso de cámara (si la API existe)
+  let gestureHandler: (() => void) | null = null;    // arranque diferido al primer gesto (Brave)
   const pendingFrames = new Map<number, number>();   // seq -> sendTs
   let fpsWindow: number[] = [];
   const counts = { glass: 0, paper: 0, plastic: 0 };
@@ -189,6 +191,29 @@ export default function Dashboard() {
     }
   }
 
+  // Brave (y Chromium endurecido) exige una activación de usuario para abrir la
+  // cámara AUNQUE el permiso esté 'granted': getUserMedia sin gesto lanza
+  // NotAllowedError. En vez de exigir clic en un botón concreto, armamos el
+  // arranque para que dispare con la PRIMERA interacción en cualquier parte.
+  function armGestureStart() {
+    if (disposed || gestureHandler) return;
+    setAwaitingGesture(true);
+    gestureHandler = () => {
+      disarmGestureStart();
+      if (!isLive() && !starting && !disposed) void startCam(true);
+    };
+    window.addEventListener('pointerdown', gestureHandler);
+    window.addEventListener('keydown', gestureHandler);
+  }
+  function disarmGestureStart() {
+    setAwaitingGesture(false);
+    if (gestureHandler) {
+      window.removeEventListener('pointerdown', gestureHandler);
+      window.removeEventListener('keydown', gestureHandler);
+      gestureHandler = null;
+    }
+  }
+
   // Un intento de abrir la cámara. Lanza si falla; no toca el estado de error
   // (eso lo decide startCam tras agotar los reintentos).
   async function tryOpenCamera() {
@@ -213,19 +238,23 @@ export default function Dashboard() {
     overlayEl.width = w; overlayEl.height = h;
     setCamState('live');
     setEverStarted(true);
+    disarmGestureStart();                             // ya hay cámara: quita el arranque por gesto
     lastCaptureTs = 0;
     captureLoop();
   }
 
-  // Arranque con reintentos: tras un reload duro (Ctrl+Shift+R) el dispositivo
-  // puede quedar ocupado un instante porque la sesión previa no liberó la cámara
-  // a tiempo. Reintentamos en lugar de exigir clic en "Reintentar". No
-  // reintentamos si el permiso fue denegado (no se arregla reintentando).
-  async function startCam() {
+  // Arranque con reintentos (el dispositivo puede quedar ocupado un instante tras
+  // un reload). `fromGesture` indica si la llamada viene de una interacción del
+  // usuario: si NO hay gesto y getUserMedia da NotAllowedError, casi seguro es que
+  // el navegador (Brave) exige activación aunque el permiso esté concedido; ahí no
+  // es un error, esperamos el primer gesto. Con gesto y aún NotAllowedError sí es
+  // un bloqueo real del permiso.
+  async function startCam(fromGesture = false) {
     if (isLive() || starting) return;
     starting = true;
     setCamState('starting');                          // arranque visible (permiso + adquisición)
     setCamError('');
+    setAwaitingGesture(false);
     const delays = [0, 400, 1000];
     let lastErr: unknown = null;
     for (let i = 0; i < delays.length && !disposed && !isLive(); i++) {
@@ -235,12 +264,17 @@ export default function Dashboard() {
       catch (e) { lastErr = e; if ((e as { name?: string })?.name === 'NotAllowedError') break; }
     }
     starting = false;
-    if (!isLive() && !disposed) {
-      const denied = (lastErr as { name?: string })?.name === 'NotAllowedError';
+    if (isLive() || disposed) return;
+    const denied = (lastErr as { name?: string })?.name === 'NotAllowedError';
+    if (denied && !fromGesture) {
+      setCamState('idle');                            // falta el gesto: esperamos la 1ª interacción
+      armGestureStart();
+    } else if (denied) {
+      setCamState('error');                           // gesto presente y aún denegado → bloqueo real
+      setCamError('Permiso de cámara bloqueado. Habilítalo desde el icono de cámara en la barra de direcciones y pulsa Reintentar.');
+    } else {
       setCamState('error');
-      setCamError(denied
-        ? 'Permiso de cámara bloqueado o no concedido. Habilítalo desde el icono de cámara en la barra de direcciones y pulsa Reintentar.'
-        : 'No se pudo abrir la cámara (en uso por otra app o no disponible).');
+      setCamError('No se pudo abrir la cámara (en uso por otra app o no disponible).');
     }
   }
 
@@ -254,7 +288,7 @@ export default function Dashboard() {
 
   async function changeDevice(id: string) {
     setSelectedDevice(id);
-    if (isLive()) { stopCam(); await startCam(); }
+    if (isLive()) { stopCam(); await startCam(true); }   // viene del onChange del select (gesto)
   }
 
   // ── Bucle de captura (rAF, throttle a fps objetivo, backpressure) ─────────────
@@ -303,30 +337,31 @@ export default function Dashboard() {
     await enumerateCams().catch(() => {});           // primer listado (sin labels hasta dar permiso)
     if (!selectedDevice() && devices().length) setSelectedDevice(devices()[0].deviceId);
 
-    // Auto-inicio SOLO con permiso 'granted' persistente. Tras un reload duro no
-    // hay gesto del usuario; con el permiso en "preguntar", getUserMedia
-    // automático lanza NotAllowedError. Con 'granted' arranca sin gesto; si no,
-    // dejamos un arranque de un clic (el clic aporta el gesto y, al permitir, el
-    // permiso queda persistente → las siguientes recargas duras arrancan solas).
+    // Intentamos auto-arrancar sin gesto (funciona en Chrome con permiso
+    // 'granted'). Brave exige activación aunque el permiso esté concedido: ahí
+    // startCam(false) detecta el NotAllowedError y arma el arranque por gesto, de
+    // modo que la PRIMERA interacción en la página abre la cámara (sin cazar un
+    // botón). Si el permiso está bloqueado, mostramos cómo habilitarlo.
     permStatus = await queryCamPermission();
     if (permStatus) {
       permStatus.onchange = () => {
-        if (permStatus?.state === 'granted' && !isLive() && !starting && !disposed) void startCam();
+        if (permStatus?.state === 'granted' && !isLive() && !starting && !disposed) void startCam(false);
       };
     }
     const state = permStatus?.state ?? 'prompt';
-    if (state === 'granted') {
-      await startCam();
-    } else if (state === 'denied') {
+    if (state === 'denied') {
       setCamState('error');
       setCamError('Permiso de cámara bloqueado. Habilítalo desde el icono de cámara en la barra de direcciones y pulsa Reintentar.');
+    } else if (state === 'granted') {
+      await startCam(false);                          // Chrome: arranca solo; Brave: armará el gesto
     } else {
-      setCamState('idle');                           // 'prompt': un clic en "Iniciar cámara" (aporta el gesto)
+      armGestureStart();                              // 'prompt': la 1ª interacción dispara el permiso
     }
   });
 
   onCleanup(() => {
     disposed = true;
+    disarmGestureStart();
     if (permStatus) { permStatus.onchange = null; permStatus = null; }
     ws.removeEventListener('open', onOpen);
     ws.removeEventListener('message', onMessage);
@@ -379,12 +414,18 @@ export default function Dashboard() {
               <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-bg-panel">
                 <span class="text-sm text-text-secondary">
                   {camState() === 'error' ? 'No se pudo abrir la cámara'
+                    : awaitingGesture() ? 'Haz clic para iniciar la cámara'
                     : everStarted() ? 'Cámara detenida' : 'Activa la cámara'}
                 </span>
+                <Show when={awaitingGesture()}>
+                  <span class="max-w-xs text-center text-xs text-text-secondary opacity-80">
+                    Tu navegador pide una interacción para abrir la cámara.
+                  </span>
+                </Show>
                 <Show when={camError()}>
                   <span class="max-w-xs text-center text-xs text-text-secondary opacity-80">{camError()}</span>
                 </Show>
-                <button class={BTN} onClick={() => startCam()}>
+                <button class={BTN} onClick={() => startCam(true)}>
                   {camState() === 'error' ? 'Reintentar' : 'Iniciar cámara'}
                 </button>
               </div>
@@ -414,7 +455,7 @@ export default function Dashboard() {
               </Show>
             </select>
             <div class="mt-3 flex items-center gap-2">
-              <button class={BTN} disabled={camState() === 'starting' || isLive()} onClick={() => startCam()}>Iniciar</button>
+              <button class={BTN} disabled={camState() === 'starting' || isLive()} onClick={() => startCam(true)}>Iniciar</button>
               <button class={BTN_GHOST} disabled={!isLive()} onClick={stopCam}>Detener</button>
               <span class="ml-auto font-mono text-xs text-text-secondary tabular">{frameSize() || '—'}</span>
             </div>
