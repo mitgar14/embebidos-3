@@ -1,14 +1,13 @@
 // web/src/components/NanoStatus.tsx
-// HUB-02: estado del Nano inline (conexión, salud y última inferencia), sin
-// que el usuario tenga que hacer nada. Cluster compacto en mono, dots/texto;
-// sin cards ni border-left. La conexión la pinta StatusDot; salud e inferencia
-// se derivan de wsStatus + lastMessageAt (el sondeo /health solo refina cuando
-// el WS no está activo, ver nanoStore).
+// HUB-02: estado del Nano inline (conexión + última inferencia), sin que el
+// usuario tenga que hacer nada. Cluster compacto en mono; la conexión la pinta
+// StatusDot (su color ya comunica el estado) y la inferencia sale de
+// lastMessageAt. Sin cards ni border-left.
 
 import { createSignal, onCleanup } from 'solid-js';
 import { StatusDot } from './StatusDot';
 import { wsStatus } from '../stores/wsStore';
-import { nanoHealth, lastMessageAt } from '../stores/nanoStore';
+import { lastMessageAt } from '../stores/nanoStore';
 
 const CONN_LABELS: Record<string, string> = {
   connecting:   'conectando',
@@ -32,23 +31,12 @@ export function NanoStatus() {
   const id = setInterval(() => setNow(Date.now()), 1000);
   onCleanup(() => clearInterval(id));
 
-  // Salud: con el WS activo, nanoHealth (sondeo /health) está fresco y puede
-  // marcar "degradada" si el endpoint falla pese a la conexión. Con el WS caído
-  // no sondeamos /health, así que la salud la deriva el propio wsStatus.
-  const salud = () => {
-    if (wsStatus() === 'active') return nanoHealth() === 'down' ? 'degradada' : 'operativo';
-    if (wsStatus() === 'closed') return 'caída';
-    return 'enlazando';   // connecting / reconnecting
-  };
-
   return (
     <div class="flex items-center gap-2.5 font-mono text-xs text-text-secondary">
       <span class="flex items-center gap-1.5">
         <StatusDot status={wsStatus()} />
         <span>{CONN_LABELS[wsStatus()] ?? wsStatus()}</span>
       </span>
-      <span class="text-border" aria-hidden="true">·</span>
-      <span>salud {salud()}</span>
       <span class="text-border" aria-hidden="true">·</span>
       <span>inferencia {desdeInferencia(lastMessageAt(), now())}</span>
     </div>
