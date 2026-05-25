@@ -2,7 +2,7 @@
 
 ## Overview
 
-Greenfield SolidJS + Vite + Bun que consolida cuatro superficies (Hub, Dashboard live, Engine del Modelo, Labelling) sobre un backend FastAPI existente en la Jetson Nano. El camino crítico para la demo del 2026-05-26 es: fundación + sistema de diseño + cliente WS reconectante -> Hub -> Dashboard live a 14 fps. Engine y Labelling se construyen en paralelo pero tienen menor prioridad de demo. La orquestación con `web.ps1` entra en la fundación para que el frontend sea levantable desde el primer commit. La Fase 5 suma dos superficies de hardware (Guía 3D del cableado y Control de servos del ESP32 por MQTT), integradas al hub.
+Greenfield SolidJS + Vite + Bun que consolida cuatro superficies (Hub, Dashboard live, Engine del Modelo, Labelling) sobre un backend FastAPI existente en la Jetson Nano. El camino crítico para la demo del 2026-05-26 es: fundación + sistema de diseño + cliente WS reconectante -> Hub -> Dashboard live a 14 fps. Engine y Labelling se construyen en paralelo pero tienen menor prioridad de demo. La orquestación con `web.ps1` entra en la fundación para que el frontend sea levantable desde el primer commit. La Fase 5 suma dos superficies de hardware (Guía 3D del cableado y Control de servos del ESP32 por MQTT), integradas al hub. La Fase 6 añade al Dashboard una segunda fuente de cámara: la C920 conectada al propio Nano, capturada e inferida en el dispositivo y transmitida al dashboard.
 
 ## Phases
 
@@ -17,7 +17,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Hub** - Pantalla de inicio command-center con estado inline del Nano, navegable a las 3 superficies
 - [x] **Phase 3: Dashboard Live** - Canvas con overlay de detección a 14 fps, métricas, controles y reconexión robusta
 - [x] **Phase 4: Engine y Labelling** - Centro del Engine del Modelo con logs SSE y Labelling con drag/resize/export
-- [ ] **Phase 5: Páginas ESP32** - Guía 3D interactiva del cableado (ESP32 + PCA9685 + servos) y panel de control de servos vía MQTT, integradas al hub (5 destinos)
+- [x] **Phase 5: Páginas ESP32** - Guía 3D interactiva del cableado (ESP32 + PCA9685 + servos) y panel de control de servos vía MQTT, integradas al hub (5 destinos) (completed 2026-05-25)
+- [ ] **Phase 6: Cámara Local del Nano** - Selector de fuente remota/local en el Dashboard; en local el Nano captura su C920 por GStreamer, infiere y transmite frame + detecciones por WS, reutilizando el worker GPU sin romper el modo remoto
 
 ## Phase Details
 
@@ -119,7 +120,37 @@ Plans:
 **Wave 2** *(parallel, blocked on Wave 1 completion)*
 
 - [x] 05-02-PLAN.md — Guía 3D: porte de la escena Three.js a web/src/guia/ + guia.tsx con montaje SolidJS, overlays con tokens y respuesta al tema
-- [ ] 05-03-PLAN.md — Control MQTT: mqtt.ts + servoProtocol.ts + servoStore.ts + control.tsx con estado dual y brownout protection
+- [x] 05-03-PLAN.md — Control MQTT: mqtt.ts + servoProtocol.ts + servoStore.ts + control.tsx con estado dual y brownout protection
+
+**UI hint**: yes
+
+### Phase 6: Cámara Local del Nano
+
+**Goal**: El usuario puede alternar en el Dashboard entre cámara remota (la webcam del navegador) y cámara local (la Logitech C920 conectada al Nano); en modo local el Nano captura por GStreamer, infiere con el engine TRT y transmite frame + detecciones al dashboard a ritmo usable, sin romper el modo remoto ni el sistema de diseño, y libera la cámara al salir
+**Mode:** mvp
+**Depends on**: Phase 3 (Dashboard Live)
+**Requirements**: CAM-01, CAM-02, CAM-03, CAM-04
+**Success Criteria** (what must be TRUE):
+
+  1. El Dashboard muestra un selector de fuente remota/local; al elegir "local" el video proviene de la C920 del Nano con overlay de bounding boxes (clases vidrio/papel/plástico, colores Wong) a ~10-14 fps; el modo "remota" (getUserMedia) sigue funcionando sin cambios
+  2. En modo local el server captura `/dev/video0` por GStreamer (`nvv4l2decoder mjpeg=1` con fallback a `jpegdec`) y reutiliza el `TRTWorker` existente bifurcando por tipo de entrada (`bytes`=remoto, `np.ndarray`=local); el modo remoto queda intacto
+  3. El Nano transmite el frame + las detecciones por WebSocket binario y el Dashboard dibuja el overlay reutilizando `drawDetections`; existe un endpoint MJPEG de respaldo para la demo
+  4. Cambiar de local a remota o salir del Dashboard libera `/dev/video0` (un segundo proceso puede reabrir la cámara); si la cámara no está disponible, el Dashboard muestra un estado claro sin colgarse
+  5. Ninguna pantalla rompe el sistema de diseño (sin cards, sin border-left de acento, SVG no emojis, animaciones solo transform/opacity)
+
+**Plans**: 3 planes
+Plans:
+**Wave 1**
+
+- [x] 06-01-PLAN.md: Captura GStreamer + worker dual. `camera_capture.py` (pipeline HW `nvv4l2decoder mjpeg=1` con fallback `jpegdec`, frame nativo 640x480, hilo `cam-reader` daemon) y bifurcación del `TRTWorker` por tipo de entrada (`bytes`=remoto, `np.ndarray`=local)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 06-02-PLAN.md: Transporte Nano hacia el browser. `/ws/local` (frame binario 640x480 + bboxes JSON, `imencode` solo en el hook del worker) + `/camera/mjpeg` de respaldo (generador síncrono) + arbitraje de modo único + deploy al Nano + checkpoint humano
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 06-03-PLAN.md: Selector de fuente y render local en el Dashboard. `localCamera.ts` + `dashboard.tsx` (canvas dimensionado a las dims reales del frame, overlay reusando `drawDetections`, liberación de la cámara al cambiar de fuente)
 
 **UI hint**: yes
 
@@ -134,4 +165,5 @@ Las fases 3, 4 y 5 dependen de la Fase 2 (Hub). La Fase 5 es independiente de la
 | 2. Hub | pragmática | Completa | 2026-05-25 |
 | 3. Dashboard Live | pragmática | Completa (validada en vivo) | 2026-05-25 |
 | 4. Engine y Labelling | pragmática | Completa | 2026-05-25 |
-| 5. Páginas ESP32 | 2/3 | In Progress|  |
+| 5. Páginas ESP32 | 3/3 | Complete   | 2026-05-25 |
+| 6. Cámara Local del Nano | 1/3 | In Progress|  |

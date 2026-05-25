@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Plan 01-03 Tarea 1 completa. Checkpoint humano (Tarea 2): verificar start+stop del frontend con web.ps1."
-last_updated: "2026-05-25T13:16:27.206Z"
+stopped_at: Fase 6 planeada y verificada (plan-checker CONCERNS resueltos). 3 planes listos en .planning/phases/06-c-mara-local-del-nano/. Pendiente la decisión del usuario para ejecutar (gsd-execute-phase 6).
+last_updated: "2026-05-25T20:10:26.721Z"
 last_activity: 2026-05-25
 progress:
-  total_phases: 5
-  completed_phases: 1
-  total_plans: 6
-  completed_plans: 5
-  percent: 20
+  total_phases: 6
+  completed_phases: 2
+  total_plans: 9
+  completed_plans: 7
+  percent: 33
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-24)
 
 **Core value:** Dashboard live a ~14 fps con WS reconectante, fluido y profesional en la sustentación del 2026-05-26
-**Current focus:** Phase 05 — Páginas ESP32
+**Current focus:** Phase 06: Cámara Local del Nano (planeada, lista para ejecutar)
 
 ## Current Position
 
-Phase: 05 (Páginas ESP32) — EXECUTING
-Plan: 3 of 3
+Phase: 06 (Cámara Local del Nano) PLANNED, lista para ejecutar
+Plan: 1 of 3 (3 planes en 3 waves secuenciales)
 Status: Ready to execute
 Last activity: 2026-05-25
 
-Progress: [████████░░] 83%
+Progress: [████████░░] 78%
 
 ## Performance Metrics
 
@@ -54,6 +54,7 @@ Progress: [████████░░] 83%
 *Updated after each plan completion*
 | Phase 05 P01 | 8 | 2 tasks | 6 files |
 | Phase 05 P02 | 20min | 2 tasks | 2 files |
+| Phase 06 P01 | 5min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -103,10 +104,16 @@ Decisiones canónicas en PROJECT.md Key Decisions. Resumen relevante:
 - [Phase ?]: guia.tsx expone div#guia-container como punto de montaje del canvas Three.js del Plan 05-02
 - [Phase ?]: Sin fugar contexto WebGL al navegar entre rutas en SolidJS
 
+- [Fase 6 · planeada] Cámara local del Nano (C920 en /dev/video0) como 2a fuente del Dashboard, encauzada por GSD. Cámara verificada lista (sin config extra). Investigación cerrada (investigaciones/2026-05-25-camara-local-server-jetson.md, copiada a 06-RESEARCH.md). Fase 6 en ROADMAP/REQUIREMENTS (CAM-01..04). 3 planes en 3 waves secuenciales: 06-01 captura+worker dual (autónomo), 06-02 transporte+deploy (checkpoint humano), 06-03 frontend (checkpoint humano). plan-checker dio CONCERNS, resueltos quirúrgicamente. Decisiones clave: pipeline GStreamer `v4l2src io-mode=2 ! nvv4l2decoder mjpeg=1 ! nvvidconv ! BGRx ! videoconvert ! BGR` (frame NATIVO 640x480, SIN forzar 416 para no aplastar el 4:3; el TRTWorker letterboxea internamente igual que en remoto y postprocess devuelve bboxes en 640x480); `cap.read()` en hilo daemon (NO callbacks GLib, mueren cada ~25s por GIL); TRTWorker bifurca por tipo (bytes=imdecode remoto intacto, np.ndarray=local salta imdecode); transporte WS binario (frame JPEG + bboxes JSON) con `imencode` SOLO en el hook del worker (no bloquea el event loop async del /ws remoto); MJPEG de respaldo como generador síncrono; arbitraje de modo único (un solo /ws/local enciende la cámara) con un único `finally` dueño de la liberación de /dev/video0; el cliente dibuja a las dims reales del frame reusando `drawDetections`.
+- [Phase ?]: 06-01: TRTWorker bifurca por tipo del item (bytes remoto vs np.ndarray local) con ruta de inferencia compartida (_letterbox); modo remoto byte-por-byte equivalente
+- [Phase ?]: 06-01: el resultado del modo local sale por el hook on_local_result(result, frame_original_640x480), no por future; lo conecta 06-02
+- [Phase ?]: 06-01: pipeline GStreamer entrega 640x480 BGR nativo (sin redimensionar a 416 en nvvidconv); el worker letterboxea, conservando el 4:3
+
 ### Pending Todos
 
-- Fase 5: ejecutar con gsd-execute-phase 5. Wave 1 (05-01) y luego Wave 2 (05-02 Guía + 05-03 Control, paralelos). Repos fuente en C:/Users/mitgar14/AppData/Local/Temp/esp32-repos/{guide,control}.
-- Tras ejecutar: verificar con Playwright (la escena 3D dibuja, comprobado con getImageData; el Control conecta a MQTT y resuelve el estado dual) y ensayar para la demo del 2026-05-26.
+- Fase 6 (Cámara Local del Nano): ejecutar con gsd-execute-phase 6. Wave 1 (06-01 captura + worker dual, autónomo) -> Wave 2 (06-02 transporte /ws/local + MJPEG + deploy, checkpoint humano) -> Wave 3 (06-03 frontend selector + render local, checkpoint humano). La C920 ya está verificada lista en el Nano (sin configuración extra).
+- Deploy al Nano (06-02): por copia + restart de embebidos3-server.service; NUNCA tocar scripts del Nano durante un build activo. Verificar /ws/local con un cliente WS antes de pasar a 06-03.
+- Ensayar la demo del 2026-05-26 con ambos modos de cámara (remota getUserMedia + local C920).
 
 ### Blockers/Concerns
 
@@ -122,6 +129,6 @@ Decisiones canónicas en PROJECT.md Key Decisions. Resumen relevante:
 
 ## Session Continuity
 
-Last session: 2026-05-25T13:16:27.198Z
-Stopped at: Plan 01-03 Tarea 1 completa. Checkpoint humano (Tarea 2): verificar start+stop del frontend con web.ps1.
+Last session: 2026-05-25T20:09:59.105Z
+Stopped at: Fase 6 planeada y verificada (plan-checker CONCERNS resueltos). 3 planes listos en .planning/phases/06-c-mara-local-del-nano/. Pendiente la decisión del usuario para ejecutar (gsd-execute-phase 6).
 Resume file: None

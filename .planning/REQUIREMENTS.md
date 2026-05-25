@@ -57,9 +57,16 @@ Requisitos para la sustentación. Cada uno mapea a una fase del roadmap.
 
 ### Control de Servos (ESP32 vía MQTT)
 
-- [ ] **CTRL-01**: El usuario controla los servos conectados al ESP32 desde el navegador, que habla MQTT sobre WebSocket directamente con el broker (sin backend intermedio), publicando los comandos en los topics del firmware
-- [ ] **CTRL-02**: La página tiene dos estados según el firmware: si el ESP32 está en línea (Last Will retenido) muestra el panel de control (un control por servo con ángulo y presets, autoconfigurado por la telemetría que reporta el ESP32); si no, muestra el instructivo para flashear y poner en marcha el firmware
-- [ ] **CTRL-03**: La UI muestra el estado de la conexión (broker y ESP32) y respeta la restricción de alimentación (evita mover varios servos a la vez para no provocar brownout)
+- [x] **CTRL-01**: El usuario controla los servos conectados al ESP32 desde el navegador, que habla MQTT sobre WebSocket directamente con el broker (sin backend intermedio), publicando los comandos en los topics del firmware
+- [x] **CTRL-02**: La página tiene dos estados según el firmware: si el ESP32 está en línea (Last Will retenido) muestra el panel de control (un control por servo con ángulo y presets, autoconfigurado por la telemetría que reporta el ESP32); si no, muestra el instructivo para flashear y poner en marcha el firmware
+- [x] **CTRL-03**: La UI muestra el estado de la conexión (broker y ESP32) y respeta la restricción de alimentación (evita mover varios servos a la vez para no provocar brownout)
+
+### Cámara Local del Nano (Dashboard · GStreamer)
+
+- [ ] **CAM-01**: El usuario puede elegir en el Dashboard la fuente de cámara entre "remota" (la webcam del navegador, vía `getUserMedia`) y "local" (la Logitech C920 conectada al Nano), con un solo modo activo a la vez
+- [x] **CAM-02**: En modo local, el server del Nano captura `/dev/video0` por GStreamer (`nvv4l2decoder mjpeg=1` con fallback a `jpegdec`), infiere con el engine TRT y reutiliza el worker GPU existente bifurcando por tipo de entrada, sin romper el modo remoto
+- [ ] **CAM-03**: En modo local, el Nano transmite el frame + las detecciones al Dashboard por WebSocket binario y el Dashboard dibuja el overlay reutilizando `drawDetections` a ~10-14 fps; existe un endpoint MJPEG de respaldo para la demo
+- [ ] **CAM-04**: Al cambiar de fuente o salir del Dashboard, el modo local libera `/dev/video0` limpiamente; si la cámara no está disponible, el Dashboard muestra un estado claro sin colgarse
 
 ### Orquestación
 
@@ -125,15 +132,20 @@ Qué fases cubren qué requisitos.
 | GUIA-01 | Phase 5 — Páginas ESP32 | Complete |
 | GUIA-02 | Phase 5 — Páginas ESP32 | Complete |
 | GUIA-03 | Phase 5 — Páginas ESP32 | Complete |
-| CTRL-01 | Phase 5 — Páginas ESP32 | Pending |
-| CTRL-02 | Phase 5 — Páginas ESP32 | Pending |
-| CTRL-03 | Phase 5 — Páginas ESP32 | Pending |
+| CTRL-01 | Phase 5 — Páginas ESP32 | Complete |
+| CTRL-02 | Phase 5 — Páginas ESP32 | Complete |
+| CTRL-03 | Phase 5 — Páginas ESP32 | Complete |
+| CAM-01 | Phase 6 — Cámara Local del Nano | Pending |
+| CAM-02 | Phase 6 — Cámara Local del Nano | Complete |
+| CAM-03 | Phase 6 — Cámara Local del Nano | Pending |
+| CAM-04 | Phase 6 — Cámara Local del Nano | Pending |
 
 **Coverage:**
-- v1 requirements: 33 total
-- Mapped to phases: 33
+- v1 requirements: 37 total
+- Mapped to phases: 37
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-05-24*
 *Last updated: 2026-05-25 — añadida Fase 5 (integración de páginas ESP32): GUIA-01..03, CTRL-01..03 y HUB-03; cobertura 33/33*
+*Last updated: 2026-05-25 — añadida Fase 6 (cámara local del Nano): CAM-01..04; cobertura 37/37*
