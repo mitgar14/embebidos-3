@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Fase 6 planeada y verificada (plan-checker CONCERNS resueltos). 3 planes listos en .planning/phases/06-c-mara-local-del-nano/. Pendiente la decisión del usuario para ejecutar (gsd-execute-phase 6).
-last_updated: "2026-05-25T20:10:26.721Z"
+stopped_at: 06-03 CODIGO + BUILD + verificación sin-Nano completos (selector remota/local, modo local con createImageBitmap + drawDetections a las dims reales del frame, remoto getUserMedia intacto; Playwright 10/10). T3 checkpoint humano e2e con video real DIFERIDO por Nano caído. Pendiente para cerrar CAM-03/CAM-04: (1) recuperar el túnel al Nano, (2) deploy DIFERIDO de 06-02 (T3), (3) checkpoint humano de 06-03 (T3). Comandos en 06-03-SUMMARY.md.
+last_updated: "2026-05-25T20:42:30.520Z"
 last_activity: 2026-05-25
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 9
-  completed_plans: 7
-  percent: 33
+  completed_plans: 9
+  percent: 50
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-05-24)
 
 ## Current Position
 
-Phase: 06 (Cámara Local del Nano) PLANNED, lista para ejecutar
-Plan: 1 of 3 (3 planes en 3 waves secuenciales)
-Status: Ready to execute
+Phase: 06 (Cámara Local del Nano) EN EJECUCIÓN
+Plan: 3 of 3 (06-01 completo; 06-02 código completo, deploy DIFERIDO; 06-03 código + build + verificación sin-Nano completos, checkpoint humano DIFERIDO)
+Status: Código de la fase completo; verificación en hardware (deploy 06-02 + checkpoints humanos) DIFERIDA por Nano caído
 Last activity: 2026-05-25
 
-Progress: [████████░░] 78%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -55,6 +55,8 @@ Progress: [████████░░] 78%
 | Phase 05 P01 | 8 | 2 tasks | 6 files |
 | Phase 05 P02 | 20min | 2 tasks | 2 files |
 | Phase 06 P01 | 5min | 2 tasks | 2 files |
+| Phase 06 P02 | 5min | 2 tasks (T3 deploy diferida) | 1 file |
+| Phase 06 P03 | 18min | 2 tasks (T3 checkpoint humano diferido) | 2 files |
 
 ## Accumulated Context
 
@@ -108,11 +110,19 @@ Decisiones canónicas en PROJECT.md Key Decisions. Resumen relevante:
 - [Phase ?]: 06-01: TRTWorker bifurca por tipo del item (bytes remoto vs np.ndarray local) con ruta de inferencia compartida (_letterbox); modo remoto byte-por-byte equivalente
 - [Phase ?]: 06-01: el resultado del modo local sale por el hook on_local_result(result, frame_original_640x480), no por future; lo conecta 06-02
 - [Phase ?]: 06-01: pipeline GStreamer entrega 640x480 BGR nativo (sin redimensionar a 416 en nvvidconv); el worker letterboxea, conservando el 4:3
+- [Fase 6] 06-02: endpoint nuevo /ws/local (no extender /ws); por frame manda binario JPEG 640x480 + JSON {ok,bboxes,t_infer_ms,seq} desde un snapshot único (get_latest una vez por iteración, ambos sends del mismo snap para no desemparejar). Contrato congelado, lo consume 06-03 idéntico
+- [Fase 6] 06-02: el cv2.imencode vive SOLO en el hook _on_local_result (hilo del worker), nunca en el event loop; /ws/local y /camera/mjpeg solo leen el latest-frame ya codificado (LocalStreamState con lock). Mitiga la degradación del /ws remoto
+- [Fase 6] 06-02: arbitraje de modo único (local_active/local_lock): la 2a conexión a /ws/local recibe local_busy. El arbitraje y el arranque de cámara van FUERA del try/finally; el finally (único dueño de la limpieza, _cam_capture.stop() + reset) solo se arma cuando ESTA conexión encendió la cámara. /camera/mjpeg NO enciende la cámara (espejo de solo lectura, 409 local_not_active si no hay modo local) -> una sola puerta de encendido de /dev/video0
+- [Fase 6] 06-02: /camera/mjpeg es SÍNCRONO (Starlette lo corre en threadpool, el time.sleep no bloquea el loop); el generador yield-ea bytes multipart (boundary --frame). Verificado por AST: camera_mjpeg y su gen son síncronos, un solo finally en ws_local
+- [Fase 6] 06-03: cliente WS del modo local en lib/localCamera.ts (LocalCameraClient): WS crudo a /ws/local (no el ws global), binaryType arraybuffer, empareja el frame binario con el siguiente JSON ok:true (orden estricto), decodifica con createImageBitmap fuera del hilo principal, close() idempotente. Sin canvas fuera de pantalla ni Web Worker (diferido a V2-02)
+- [Fase 6] 06-03: el Dashboard dimensiona el canvas del frame local a bitmap.width/bitmap.height en el primer frame (640x480 4:3, sin aplastar; nunca un tamaño cuadrado fijo) y dibuja el overlay con drawDetections a esas dims; bitmap.close() tras drawImage. Modo remoto getUserMedia/captureLoop/sendFrame intacto, gated tras source==remota; bootRemote() extraído y reutilizado por onMount y el cambio a remota
+- [Fase 6] 06-03: en local Retardo/Transferencia van en guion (sin envío de frame del cliente) y Ritmo objetivo se deshabilita (lo marca el Nano). CAM-01 cerrado (selector verificado con Playwright 10/10: conmuta, estado de error claro sin spinner infinito, remoto intacto); CAM-03/CAM-04 siguen Pending hasta el checkpoint humano con el Nano vivo
 
 ### Pending Todos
 
-- Fase 6 (Cámara Local del Nano): ejecutar con gsd-execute-phase 6. Wave 1 (06-01 captura + worker dual, autónomo) -> Wave 2 (06-02 transporte /ws/local + MJPEG + deploy, checkpoint humano) -> Wave 3 (06-03 frontend selector + render local, checkpoint humano). La C920 ya está verificada lista en el Nano (sin configuración extra).
-- Deploy al Nano (06-02): por copia + restart de embebidos3-server.service; NUNCA tocar scripts del Nano durante un build activo. Verificar /ws/local con un cliente WS antes de pasar a 06-03.
+- **DIFERIDO — Deploy de 06-02 al Nano (T3) + verificación en hardware:** cuando el túnel SSH vuelva. Comandos exactos en 06-02-SUMMARY.md. Regla de oro: confirmar que NO hay build activo (curl /jobs/active == null) ANTES de copiar; NUNCA tocar scripts del Nano durante un build. Pasos: scp nano_server.py + camera_capture.py -> restart embebidos3-server.service -> validar pipeline gst-launch -> abrir /camera/mjpeg con un /ws/local activo y confirmar video 4:3 sin aplastar + liberación de /dev/video0 al cerrar.
+- Fase 6 Wave 3: 06-03 frontend selector remota/local + render local (checkpoint humano). Consume el contrato de /ws/local ya congelado. La C920 ya está verificada lista en el Nano.
+- CAM-03 y CAM-04 siguen Pending: se cierran cuando 06-03 exista y la verificación en hardware de 06-02 pase.
 - Ensayar la demo del 2026-05-26 con ambos modos de cámara (remota getUserMedia + local C920).
 
 ### Blockers/Concerns
@@ -129,6 +139,6 @@ Decisiones canónicas en PROJECT.md Key Decisions. Resumen relevante:
 
 ## Session Continuity
 
-Last session: 2026-05-25T20:09:59.105Z
-Stopped at: Fase 6 planeada y verificada (plan-checker CONCERNS resueltos). 3 planes listos en .planning/phases/06-c-mara-local-del-nano/. Pendiente la decisión del usuario para ejecutar (gsd-execute-phase 6).
+Last session: 2026-05-25T20:42:30.510Z
+Stopped at: 06-02 CODIGO completo (T1 /ws/local + T2 /camera/mjpeg). T3 deploy al Nano + checkpoint humano DIFERIDOS por Nano inalcanzable (SSH timeout) y usuario ausente. Comandos de deploy listos en 06-02-SUMMARY.md. Reanudar con el deploy cuando el túnel SSH vuelva, luego 06-03.
 Resume file: None
