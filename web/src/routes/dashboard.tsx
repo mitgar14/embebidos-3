@@ -14,7 +14,7 @@
 // del usuario, getUserMedia con permiso en "preguntar" lanza NotAllowedError
 // (típico tras un reload duro Ctrl+Shift+R, que no arrastra activación).
 
-import { createSignal, onMount, onCleanup, For, Show, type JSX } from 'solid-js';
+import { createSignal, createEffect, onMount, onCleanup, For, Show, type JSX } from 'solid-js';
 import { A } from '@solidjs/router';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { StatusDot } from '../components/StatusDot';
@@ -65,6 +65,7 @@ export default function Dashboard() {
   // ── Refs y contexto de canvas ──────────────────────────────────────────────
   let videoEl!: HTMLVideoElement;
   let overlayEl!: HTMLCanvasElement;
+  let deviceSelectEl!: HTMLSelectElement;
   const captureCanvas = document.createElement('canvas');
   const captureCtx = captureCanvas.getContext('2d')!;
   let overlayCtx: CanvasRenderingContext2D | null = null;
@@ -161,10 +162,16 @@ export default function Dashboard() {
   }
 
   // ── Cámara ────────────────────────────────────────────────────────────────────
+  // Solo lista; NO toca selectedDevice (eso lo decide onMount o el track abierto).
+  // No re-emite si la lista no cambió: enumerateDevices() devuelve objetos nuevos
+  // en cada llamada y un setDevices innecesario haría que <For> reconstruya las
+  // <option>, reseteando visualmente el <select> a la primera cámara.
   async function enumerateCams() {
     const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
-    setDevices(devs);
-    if (devs.length && !selectedDevice()) setSelectedDevice(devs[0].deviceId);
+    const prev = devices();
+    const same = devs.length === prev.length &&
+      devs.every((d, i) => d.deviceId === prev[i].deviceId && d.label === prev[i].label);
+    if (!same) setDevices(devs);
   }
 
   function releaseTracks() {
@@ -195,6 +202,10 @@ export default function Dashboard() {
     videoEl.srcObject = stream;
     await videoEl.play();
     await enumerateCams().catch(() => {});            // labels disponibles tras el permiso
+    // La fuente de verdad del dispositivo activo es el track, no lo que pedimos:
+    // sincroniza el <select> con la cámara que REALMENTE quedó abierta.
+    const activeId = s.getVideoTracks()[0]?.getSettings().deviceId;
+    if (activeId) setSelectedDevice(activeId);
     const w = videoEl.videoWidth, h = videoEl.videoHeight;
     setFrameSize(`${w} × ${h}`);
     setAspect(`${w} / ${h}`);
@@ -273,6 +284,15 @@ export default function Dashboard() {
   function onConf(pct: number) { setConfPct(pct); sendConf(); }
   function onSnapshot() { if (isLive()) exportSnapshot(videoEl, overlayEl, true); }
 
+  // Re-afirma el valor del <select> cuando cambian las opciones: si <For>
+  // reconstruye las <option>, el navegador puede resetear la selección visible
+  // aunque selectedDevice() no haya cambiado. Esto la mantiene sincronizada.
+  createEffect(() => {
+    const v = selectedDevice();
+    devices();                                       // dependencia: re-correr al cambiar opciones
+    if (deviceSelectEl && deviceSelectEl.value !== v) deviceSelectEl.value = v;
+  });
+
   // ── Ciclo de vida ─────────────────────────────────────────────────────────────
   onMount(async () => {
     overlayCtx = overlayEl.getContext('2d');
@@ -281,6 +301,7 @@ export default function Dashboard() {
     ws.addEventListener('message', onMessage);
     if (ws.readyState === WebSocket.OPEN) sendConf();
     await enumerateCams().catch(() => {});           // primer listado (sin labels hasta dar permiso)
+    if (!selectedDevice() && devices().length) setSelectedDevice(devices()[0].deviceId);
 
     // Auto-inicio SOLO con permiso 'granted' persistente. Tras un reload duro no
     // hay gesto del usuario; con el permiso en "preguntar", getUserMedia
@@ -386,7 +407,7 @@ export default function Dashboard() {
         <aside class="w-80 shrink-0 border-l border-border bg-bg-panel overflow-y-auto">
           <Section title="Cámara" icon={IconCamera}>
             <label class="block text-xs text-text-secondary mb-1">Dispositivo</label>
-            <select value={selectedDevice()} onChange={(e) => changeDevice(e.currentTarget.value)}
+            <select ref={deviceSelectEl} value={selectedDevice()} onChange={(e) => changeDevice(e.currentTarget.value)}
               class="w-full rounded-md border border-border bg-bg-surface px-2 py-1.5 text-sm text-text-primary">
               <Show when={devices().length} fallback={<option value="">sin cámaras detectadas</option>}>
                 <For each={devices()}>{(d, i) => <option value={d.deviceId}>{d.label || `cámara ${i() + 1}`}</option>}</For>
