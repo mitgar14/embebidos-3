@@ -177,4 +177,166 @@
     .info-tip { transition-property: opacity; transform: translateY(0); }
     .info-tip-down { transform: translateY(0); }
   }
+
+  /* ─── Guia 3D overlays ─────────────────────────────────────── */
+
+  /* Tooltip de pin Three.js */
+  .tooltip {
+    background:  var(--bg-panel);
+    border:      1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding:     8px 12px;
+    pointer-events: none;
+    font-size:   12px;
+    line-height: 1.4;
+    min-width:   80px;
+    transition:  none;
+  }
+  .tooltip.visible { display: block !important; }
+  .tooltip .tt-title { font-weight: 600; color: var(--text-primary); }
+  .tooltip .tt-type  { color: var(--text-secondary); font-size: 11px; margin-top: 2px; }
+
+  /* Ficha de pin (PinDetail) */
+  .pin-detail {
+    position:     fixed;
+    bottom:       80px;
+    right:        20px;
+    width:        260px;
+    background:   var(--bg-panel);
+    border:       1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding:      16px;
+    z-index:      40;
+    font-size:    13px;
+    display:      none;
+    box-shadow:   0 8px 24px rgba(0,0,0,0.35);
+  }
+  .pin-detail.visible { display: block; }
+  .pin-detail .pd-close {
+    position: absolute; top: 10px; right: 12px;
+    background: none; border: none; cursor: pointer;
+    font-size: 16px; color: var(--text-secondary);
+    line-height: 1;
+    transition: color 150ms;
+  }
+  .pin-detail .pd-close:hover { color: var(--text-primary); }
+  .pin-detail .pd-header { margin-bottom: 10px; }
+  .pin-detail .pd-type {
+    display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase; padding: 2px 6px; border-radius: var(--radius-sm);
+    background: var(--accent-bg); color: var(--accent); margin-bottom: 4px;
+  }
+  .pin-detail .pd-name { font-weight: 700; font-size: 14px; color: var(--text-primary); margin: 0 0 2px; }
+  .pin-detail .pd-sub  { font-size: 11px; color: var(--text-secondary); }
+  .pin-detail .pd-row  { display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--border-color); }
+  .pin-detail .pd-row span { color: var(--text-secondary); }
+  .pin-detail .pd-row strong { color: var(--text-primary); font-weight: 600; }
+  .pin-detail .pd-desc { font-size: 11px; color: var(--text-secondary); line-height: 1.5; margin: 8px 0 0; }
+
+  /* Modal de bienvenida */
+  .welcome-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; opacity: 0; pointer-events: none;
+    transition: opacity 200ms;
+  }
+  .welcome-overlay.visible { opacity: 1; pointer-events: all; }
+  .welcome-card {
+    background:    var(--bg-panel);
+    border:        1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding:       32px;
+    width:         min(520px, 90vw);
+    max-height:    80vh;
+    overflow-y:    auto;
+    position:      relative;
+  }
+  .welcome-close {
+    position: absolute; top: 16px; right: 16px;
+    background: none; border: none; cursor: pointer;
+    font-size: 20px; color: var(--text-secondary);
+    line-height: 1;
+    transition: color 150ms;
+  }
+  .welcome-close:hover { color: var(--text-primary); }
+  .welcome-title { font-size: 18px; font-weight: 700; color: var(--text-primary); margin: 0 0 12px; }
+  .welcome-body { font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+  .welcome-body p  { margin: 0 0 10px; }
+  .welcome-body ul { padding-left: 20px; margin: 0 0 10px; }
+  .welcome-body li { margin-bottom: 4px; }
+  .welcome-body strong { color: var(--text-primary); font-weight: 600; }
+  .welcome-body code   { font-family: var(--font-mono); font-size: 12px; background: var(--bg-surface); padding: 1px 4px; border-radius: 3px; }
+  .welcome-body kbd    { font-family: var(--font-mono); font-size: 11px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 3px; padding: 1px 5px; }
+  .welcome-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0 12px; }
+  .welcome-table th { text-align: left; font-weight: 600; color: var(--text-primary); padding: 4px 8px; background: var(--bg-surface); border-radius: 3px; }
+  .welcome-table td { color: var(--text-secondary); padding: 4px 8px; }
+  .welcome-table tr:not(:last-child) td { border-bottom: 1px solid var(--border-color); }
+  .welcome-nav { display: flex; align-items: center; justify-content: space-between; margin-top: 24px; }
+  .welcome-dots { display: flex; gap: 6px; }
+  .welcome-dots .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--border-color); transition: background 200ms; }
+  .welcome-dots .dot.active { background: var(--accent); }
+  .welcome-actions { display: flex; gap: 8px; }
+  .welcome-btn {
+    padding: 7px 16px; border-radius: var(--radius-md); font-size: 13px;
+    font-weight: 500; cursor: pointer; border: 1px solid var(--border-color);
+    transition: background 150ms, border-color 150ms;
+  }
+  .welcome-btn.ghost { background: none; color: var(--text-secondary); }
+  .welcome-btn.ghost:hover { background: var(--bg-surface); color: var(--text-primary); }
+  .welcome-btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .welcome-btn.primary:hover { background: var(--accent-hover); }
+  .welcome-btn:disabled { opacity: 0.4; cursor: default; }
+  .welcome-skip { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--text-secondary); margin-top: 16px; cursor: pointer; }
+
+  /* HUD de vuelo libre */
+  .fly-hud {
+    position:    absolute;
+    top:         16px;
+    left:        50%;
+    transform:   translateX(-50%);
+    background:  rgba(0,0,0,0.7);
+    border:      1px solid rgba(255,255,255,0.12);
+    border-radius: var(--radius-md);
+    padding:     10px 16px;
+    color:       rgba(255,255,255,0.85);
+    font-size:   12px;
+    text-align:  center;
+    pointer-events: none;
+    z-index:     20;
+    backdrop-filter: blur(4px);
+  }
+  .fly-hud.visible { display: block !important; }
+  .fly-hud .fh-title { font-weight: 700; margin: 0 0 4px; letter-spacing: .04em; text-transform: uppercase; font-size: 10px; opacity: .7; }
+  .fly-hud .fh-row   { margin: 2px 0; }
+  .fly-hud kbd {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 4px;
+    background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 3px; font-size: 10px; font-family: var(--font-mono);
+    color: #fff;
+  }
+
+  /* Lista de pasos en el sidebar */
+  #guia-step-list li {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--text-secondary);
+    padding: 5px 6px; border-radius: var(--radius-sm); cursor: pointer;
+    transition: background 120ms, color 120ms;
+  }
+  #guia-step-list li:hover   { background: var(--bg-surface); color: var(--text-primary); }
+  #guia-step-list li.active  { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+  #guia-step-list li.done .step-name { text-decoration: line-through; opacity: .6; }
+  #guia-step-list .chip { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.15); }
+  #guia-step-list .opt { font-size: 10px; color: var(--text-secondary); background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 3px; padding: 0 4px; margin-left: auto; }
+
+  /* Badges del panel derecho */
+  .badge-required { background: rgba(16,185,129,0.15); color: #10b981; }
+  .badge-optional  { background: rgba(156,163,175,0.15); color: var(--text-secondary); }
+
+  /* Toggle activo en controles flotantes */
+  .guia-toggle.on {
+    background:   var(--accent-bg);
+    border-color: var(--accent);
+    color:        var(--accent);
+  }
 }
