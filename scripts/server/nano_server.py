@@ -1282,6 +1282,48 @@ async def ws_local(ws: WebSocket):
             pass
 
 
+@app.get("/camera/mjpeg")
+def camera_mjpeg():
+    """Fallback de demo: sirve el latest-frame del modo local como MJPEG multipart.
+
+    SÍNCRONO a propósito (NO async): Starlette corre los generadores síncronos de
+    StreamingResponse en un threadpool, así que el time.sleep del generador NO bloquea
+    el event loop (HIGH-2). El generador interno también es síncrono y el ritmo se marca
+    con time.sleep, no con await.
+
+    NOTA DE DISEÑO (MVP): el MJPEG NO enciende la cámara por sí mismo. Mantener UNA sola
+    puerta de encendido (/ws/local) evita dos dueños del recurso /dev/video0 y simplifica
+    la liberación. Este endpoint es un espejo de SOLO LECTURA del latest-frame y solo sirve
+    video mientras hay un /ws/local activo en paralelo manteniendo la cámara encendida
+    (LOW-3). Si ningún cliente WS local está conectado, la cámara está apagada y devolvemos
+    409 (modo local inactivo). El MJPEG NO codifica nada: reusa el JPEG ya codificado en el hook.
+    """
+    if not local_active:
+        raise HTTPException(409, {"ok": False, "error": "local_not_active"})
+
+    def gen():
+        # Generador SÍNCRONO: corrido por Starlette en threadpool. Emite el latest-frame
+        # como partes multipart (boundary --frame) a ~14 fps. Termina cuando se apaga el modo
+        # local (not local_active) para no quedar girando con la cámara ya liberada.
+        while local_active:
+            snap = local_stream_state.get_latest()
+            if snap is None:
+                time.sleep(0.07)
+                continue
+            jpeg = snap[0]
+            head = (
+                "--frame\r\n"
+                "Content-Type: image/jpeg\r\n"
+                "Content-Length: {}\r\n\r\n"
+            ).format(len(jpeg)).encode("ascii")
+            yield head + jpeg + b"\r\n"
+            time.sleep(0.07)  # ~14 fps, no satura ni el loop (corre en threadpool)
+
+    return StreamingResponse(
+        gen(), media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
 def _term(signum, frame):
     worker.stop()
 
