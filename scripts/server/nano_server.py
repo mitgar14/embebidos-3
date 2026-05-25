@@ -51,6 +51,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 import hf_rest
+from camera_capture import CameraCapture
 from nano_server_constants import (
     ACTIVE_ENGINE, IMGSZ, CLASSES, DEFAULT_CONF, DEFAULT_NMS,
     JOB_STATE_FILE, HEARTBEAT_STALE_SEC,
@@ -466,6 +467,71 @@ worker = TRTWorker(ENGINE_PATH)
 _recovered_job_at_startup = None
 
 
+# ---------- Estado de modo local (06-02) --------------------------------------
+class LocalStreamState(object):
+    """Latest-frame compartido entre el thread del worker y el event loop async.
+
+    El hook _on_local_result (thread del worker) escribe aquí el ÚLTIMO frame ya
+    codificado a JPEG junto con sus bboxes; los consumidores async (/ws/local) y el
+    generador síncrono del MJPEG (/camera/mjpeg) leen de aquí. get_latest() devuelve
+    la tupla completa BAJO el lock, de un solo golpe, para que el JPEG y sus bboxes
+    nunca se desemparejen bajo una carrera entre escritor y lector.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._jpeg = None
+        self._bboxes = []
+        self._seq = None
+        self._t_infer_ms = None
+
+    def set_latest(self, jpeg, bboxes, seq, t_infer_ms):
+        with self._lock:
+            self._jpeg = jpeg
+            self._bboxes = bboxes
+            self._seq = seq
+            self._t_infer_ms = t_infer_ms
+
+    def get_latest(self):
+        """Snapshot atómico del latest-frame: (jpeg, bboxes, seq, t_infer_ms) o None."""
+        with self._lock:
+            if self._jpeg is None:
+                return None
+            return (self._jpeg, self._bboxes, self._seq, self._t_infer_ms)
+
+
+local_stream_state = LocalStreamState()
+# Arbitraje de modo único: solo un /ws/local puede tener la cámara encendida.
+local_lock = threading.Lock()
+local_active = False
+# Referencia al CameraCapture activo, para poder pararlo en el shutdown del server.
+_cam_capture = None
+
+
+def _on_local_result(result, frame):
+    """Hook del worker (06-02): ÚNICO lugar del archivo que codifica el frame local.
+
+    Corre en el HILO DEL WORKER (no en el event loop async), por eso aquí es seguro
+    hacer trabajo de CPU (codificación JPEG). Codifica el frame ORIGINAL 640x480 a JPEG
+    y guarda (jpeg, bboxes, seq, t_infer_ms) en el latest-frame compartido. El bucle de
+    /ws/local y el generador del MJPEG NO codifican nada: solo leen este latest-frame
+    ya codificado y lo envían. Así el trabajo de CPU queda fuera del event loop async
+    y no degrada el throughput del /ws remoto.
+    """
+    try:
+        ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        if not ok:
+            return
+        jpeg = buf.tobytes()
+    except Exception:
+        # Nunca propagar: el hook corre en el thread del worker y una excepción
+        # aquí no debe tumbar la inferencia.
+        return
+    local_stream_state.set_latest(
+        jpeg, result.get("bboxes", []), result.get("seq"), result.get("t_infer_ms")
+    )
+
+
 @app.on_event("startup")
 def _startup():
     global _recovered_job_at_startup
@@ -480,6 +546,10 @@ def _startup():
     worker.start()
     if not worker.wait_ready(60):
         raise RuntimeError("TRT worker no ready en 60s")
+    # 06-02: conectar el transporte de streaming local al hook del worker. El hook
+    # codifica el frame original 640x480 a JPEG (única codificación del archivo) y lo
+    # publica en el latest-frame compartido que consumen /ws/local y /camera/mjpeg.
+    worker.on_local_result = _on_local_result
     _recovered_job_at_startup = _rjs()
     if _recovered_job_at_startup:
         print(f"[server] job recovery: status={_recovered_job_at_startup.get('status')} "
@@ -489,6 +559,11 @@ def _startup():
 
 @app.on_event("shutdown")
 def _shutdown():
+    # 06-02: liberar /dev/video0 antes de parar el worker si quedó una captura
+    # local activa (p. ej. cierre del server con un /ws/local abierto).
+    global _cam_capture
+    if _cam_capture is not None and _cam_capture.is_running():
+        _cam_capture.stop()
     worker.stop()
     worker.join(timeout=5)
 
@@ -1092,6 +1167,119 @@ async def ws_handler(ws: WebSocket):
                 await ws.close()
             except Exception:
                 pass
+
+
+@app.websocket("/ws/local")
+async def ws_local(ws: WebSocket):
+    """Streaming del modo local (cámara del Nano). Contrato (06-02, consumido por 06-03):
+
+    Server -> cliente, por cada frame inferido, DOS mensajes contiguos:
+      1) BINARIO: bytes JPEG del frame 640x480 nativo (codificado en el hook del worker).
+      2) TEXTO JSON: {"ok":true,"bboxes":[...],"t_infer_ms":<float>,"seq":<int>}.
+    Errores (texto JSON con ok:false, tras enviarlo el server cierra el WS):
+      - error de modo ocupado: ya hay otra conexión local activa con la cámara.
+      - error de apertura de cámara: /dev/video0 no abre (ni HW ni fallback CPU).
+    Control opcional cliente -> server: {"type":"conf","value":0.0..1.0}.
+    """
+    global local_active, _cam_capture
+    await ws.accept()
+
+    # --- Arbitraje de modo único: solo un /ws/local enciende la cámara ---------
+    # Esto va FUERA del try/finally dueño de la limpieza: si rechazamos por busy
+    # NO somos los dueños de la cámara, y no debemos resetear local_active ni parar
+    # la captura del otro cliente.
+    with local_lock:
+        if local_active:
+            await ws.send_text(json.dumps({"ok": False, "error": "local_busy"}))
+            await ws.close()
+            return
+        local_active = True
+        cam = CameraCapture(worker.in_q)
+        _cam_capture = cam
+
+    # --- Encender la cámara. Si no abre, liberar el arbitraje y cerrar ---------
+    # También fuera del try/finally de limpieza: si la cámara nunca arrancó, no hay
+    # nada que stop()-ear; solo soltamos el flag de arbitraje.
+    try:
+        cam.start()
+    except RuntimeError:
+        with local_lock:
+            local_active = False
+            _cam_capture = None
+        await ws.send_text(json.dumps({"ok": False, "error": "camera_open_failed"}))
+        await ws.close()
+        return
+
+    # --- A partir de aquí la cámara está encendida y SOMOS sus dueños ----------
+    # MEDIUM-1: un ÚNICO try/.../finally envuelve el bucle de envío y la tarea de
+    # control. Ese finally es el ÚNICO dueño de la limpieza y SIEMPRE corre (rompa
+    # el bucle, termine la tarea de control, o lance un send): para la cámara,
+    # resetea local_active, cancela la tarea de control y cierra el WS.
+    closing = {"flag": False}
+
+    async def _control_loop():
+        """Recibe control sin bloquear el envío. SOLO señaliza el cierre; la
+        limpieza la hace el finally del handler (la tarea no es su dueña)."""
+        try:
+            while True:
+                msg = await ws.receive()
+                if msg.get("type") == "websocket.disconnect":
+                    closing["flag"] = True
+                    return
+                if "text" in msg and msg["text"] is not None:
+                    try:
+                        ctrl = json.loads(msg["text"])
+                        if ctrl.get("type") == "conf":
+                            worker.set_conf(ctrl["value"])
+                    except Exception:
+                        pass
+        except WebSocketDisconnect:
+            closing["flag"] = True
+        except Exception:
+            closing["flag"] = True
+
+    ctrl_task = asyncio.ensure_future(_control_loop())
+    last_sent_seq = None
+    try:
+        while not closing["flag"]:
+            await asyncio.sleep(1 / 30.0)
+            # MEDIUM-2: leer el latest-frame UNA SOLA VEZ por iteración en un
+            # snapshot local; ambos sends salen de ESE snap, sin releer entre los
+            # dos await (evita desemparejar el JPEG de sus bboxes bajo carrera).
+            snap = local_stream_state.get_latest()
+            if snap is None:
+                continue
+            snap_jpeg, snap_bboxes, snap_seq, snap_t_infer_ms = snap
+            if snap_seq == last_sent_seq:
+                continue
+            last_sent_seq = snap_seq
+            await ws.send_bytes(snap_jpeg)
+            await ws.send_text(json.dumps({
+                "ok": True,
+                "bboxes": snap_bboxes,
+                "t_infer_ms": snap_t_infer_ms,
+                "seq": snap_seq,
+            }))
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        # send_bytes/send_text pueden lanzar si el cliente cerró; lo absorbemos y
+        # dejamos que el finally libere la cámara.
+        pass
+    finally:
+        # Dueño ÚNICO de la limpieza. Invariante del arbitraje: mientras este handler
+        # vive, local_active=True y ninguna otra conexión pudo tocar _cam_capture (la
+        # 2a se rechaza por ocupado y retorna), así que _cam_capture sigue apuntando a `cam`.
+        _cam_capture.stop()  # libera /dev/video0 + pausa ~1 s (release lo hace el reader)
+        with local_lock:
+            local_active = False
+            _cam_capture = None
+        ctrl_task.cancel()
+        try:
+            await ws.close()
+        except Exception:
+            # El WS puede estar ya cerrado (ConnectionClosedOK); silenciar.
+            pass
 
 
 def _term(signum, frame):
