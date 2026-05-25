@@ -7,6 +7,9 @@
 // métricas y los controles son reactivos. La conexión y la reconexión las
 // maneja el ReconnectingWebSocket global, así que el indicador de reconexión
 // (DASH-04) sale del signal wsStatus sin trabajo extra.
+//
+// La cámara es una máquina de estados (idle/starting/live/error): "starting"
+// cubre todo el arranque (permiso + adquisición), distinto de "idle" detenida.
 
 import { createSignal, onMount, onCleanup, For, Show, type JSX } from 'solid-js';
 import { A } from '@solidjs/router';
@@ -15,6 +18,8 @@ import { StatusDot } from '../components/StatusDot';
 import { ws, wsStatus } from '../stores/wsStore';
 import { gpuTempC, ramMb } from '../stores/nanoStore';
 import { drawDetections, exportSnapshot, WONG, type BBox, type DetectionMsg } from '../lib/detection';
+
+type CamState = 'idle' | 'starting' | 'live' | 'error';
 
 const CONN_LABELS: Record<string, string> = {
   connecting:   'conectando',
@@ -43,6 +48,13 @@ const IconCamera   = () => <Icon><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0
 const IconSliders  = () => <Icon><line x1="21" x2="14" y1="4" y2="4" /><line x1="10" x2="3" y1="4" y2="4" /><line x1="21" x2="12" y1="12" y2="12" /><line x1="8" x2="3" y1="12" y2="12" /><line x1="21" x2="16" y1="20" y2="20" /><line x1="12" x2="3" y1="20" y2="20" /><line x1="14" x2="14" y1="2" y2="6" /><line x1="8" x2="8" y1="10" y2="14" /><line x1="16" x2="16" y1="18" y2="22" /></Icon>;
 const IconActivity = () => <Icon><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" /></Icon>;
 const IconDownload = () => <Icon><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" x2="12" y1="15" y2="3" /></Icon>;
+// Spinner de carga: rotación (transform, compositor-only) vía Tailwind animate-spin.
+const Spinner = () => (
+  <svg class="animate-spin text-text-secondary" width="22" height="22" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+  </svg>
+);
 
 const fmtInt = (v: number | null) => (v == null ? '—' : String(Math.round(v)));
 
@@ -55,7 +67,7 @@ export default function Dashboard() {
   let overlayCtx: CanvasRenderingContext2D | null = null;
 
   // ── Estado reactivo (UI) ─────────────────────────────────────────────────────
-  const [capturing, setCapturing]           = createSignal(false);
+  const [camState, setCamState]             = createSignal<CamState>('idle');
   const [devices, setDevices]               = createSignal<MediaDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = createSignal('');
   const [frameSize, setFrameSize]           = createSignal('');
@@ -64,7 +76,6 @@ export default function Dashboard() {
 
   const [confPct, setConfPct]     = createSignal(50);
   const [fpsTarget, setFpsTarget] = createSignal(14);
-  const [showVideo, setShowVideo] = createSignal(true);
 
   const [fps, setFps]                       = createSignal(0);
   const [latencyMs, setLatencyMs]           = createSignal<number | null>(null);
@@ -77,11 +88,15 @@ export default function Dashboard() {
   const [cPlastic, setCPlastic] = createSignal(0);
   const [hasDetections, setHasDetections] = createSignal(false);
 
+  const isLive = () => camState() === 'live';
+
   // ── Reloj de frames (no reactivo, vive con la conexión) ──────────────────────
   const MAX_INFLIGHT = 2;
   let seqOut = 0, inFlight = 0, lastCaptureTs = 0, totalFrames = 0;
   let rafId: number | null = null;
   let stream: MediaStream | null = null;
+  let starting = false;      // guarda reentrancia de startCam
+  let disposed = false;      // el componente se desmontó (cancela arranques en curso)
   const pendingFrames = new Map<number, number>();   // seq -> sendTs
   let fpsWindow: number[] = [];
   const counts = { glass: 0, paper: 0, plastic: 0 };
@@ -118,7 +133,7 @@ export default function Dashboard() {
     totalFrames++;
 
     const dets: BBox[] = msg.bboxes ?? [];
-    if (overlayCtx) drawDetections(overlayCtx, overlayEl.width, overlayEl.height, dets, showVideo());
+    if (overlayCtx) drawDetections(overlayCtx, overlayEl.width, overlayEl.height, dets, true);
 
     const total = sendTs !== undefined ? Math.round(now - sendTs) : null;
     const infer = msg.t_infer_ms ?? 0;
@@ -142,56 +157,81 @@ export default function Dashboard() {
 
   // ── Cámara ────────────────────────────────────────────────────────────────────
   async function enumerateCams() {
-    try {
-      const tmp = await navigator.mediaDevices.getUserMedia({ video: true });
-      tmp.getTracks().forEach((t) => t.stop());
-    } catch { /* permiso denegado: el select queda vacío, el botón sigue disponible */ }
     const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
     setDevices(devs);
     if (devs.length && !selectedDevice()) setSelectedDevice(devs[0].deviceId);
   }
 
+  function releaseTracks() {
+    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+  }
+
+  // Un intento de abrir la cámara. Lanza si falla; no toca el estado de error
+  // (eso lo decide startCam tras agotar los reintentos).
+  async function tryOpenCamera() {
+    const id = selectedDevice();
+    const s = await navigator.mediaDevices.getUserMedia({
+      video: { deviceId: id ? { exact: id } : undefined, width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false,
+    });
+    if (disposed) { s.getTracks().forEach((t) => t.stop()); return; }
+    stream = s;
+    videoEl.srcObject = stream;
+    await videoEl.play();
+    await enumerateCams().catch(() => {});            // labels disponibles tras el permiso
+    const w = videoEl.videoWidth, h = videoEl.videoHeight;
+    setFrameSize(`${w} × ${h}`);
+    setAspect(`${w} / ${h}`);
+    captureCanvas.width = w; captureCanvas.height = h;
+    overlayEl.width = w; overlayEl.height = h;
+    setCamState('live');
+    lastCaptureTs = 0;
+    captureLoop();
+  }
+
+  // Arranque con reintentos: tras un reload duro (Ctrl+Shift+R) el dispositivo
+  // puede quedar ocupado un instante porque la sesión previa no liberó la cámara
+  // a tiempo. Reintentamos en lugar de exigir clic en "Reintentar". No
+  // reintentamos si el permiso fue denegado (no se arregla reintentando).
   async function startCam() {
-    if (capturing()) return;
+    if (isLive() || starting) return;
+    starting = true;
+    setCamState('starting');                          // arranque visible (permiso + adquisición)
     setCamError('');
-    try {
-      const id = selectedDevice();
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: id ? { exact: id } : undefined, width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      });
-      videoEl.srcObject = stream;
-      await videoEl.play();
-      const w = videoEl.videoWidth, h = videoEl.videoHeight;
-      setFrameSize(`${w} × ${h}`);
-      setAspect(`${w} / ${h}`);
-      captureCanvas.width = w; captureCanvas.height = h;
-      overlayEl.width = w; overlayEl.height = h;
-      setCapturing(true);
-      lastCaptureTs = 0;
-      captureLoop();
-    } catch (e) {
-      setCamError('No se pudo abrir la cámara (permiso o dispositivo en uso).');
-      throw e;
+    const delays = [0, 400, 1000];
+    let lastErr: unknown = null;
+    for (let i = 0; i < delays.length && !disposed && !isLive(); i++) {
+      if (delays[i]) await new Promise((r) => setTimeout(r, delays[i]));
+      if (disposed) break;
+      try { await tryOpenCamera(); break; }
+      catch (e) { lastErr = e; if ((e as { name?: string })?.name === 'NotAllowedError') break; }
+    }
+    starting = false;
+    if (!isLive() && !disposed) {
+      const denied = (lastErr as { name?: string })?.name === 'NotAllowedError';
+      setCamState('error');
+      setCamError(denied
+        ? 'Permiso de cámara denegado. Habilítalo en el navegador y reintenta.'
+        : 'No se pudo abrir la cámara (en uso por otra app o no disponible).');
     }
   }
 
   function stopCam() {
-    setCapturing(false);
+    setCamState('idle');
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+    releaseTracks();
     if (videoEl) videoEl.srcObject = null;
     if (overlayCtx && overlayEl) overlayCtx.clearRect(0, 0, overlayEl.width, overlayEl.height);
   }
 
   async function changeDevice(id: string) {
     setSelectedDevice(id);
-    if (capturing()) { stopCam(); await startCam().catch(() => {}); }
+    if (isLive()) { stopCam(); await startCam(); }
   }
 
   // ── Bucle de captura (rAF, throttle a fps objetivo, backpressure) ─────────────
   function captureLoop() {
-    if (!capturing()) return;
+    if (!isLive()) return;
     const now = performance.now();
     if (now - lastCaptureTs >= 1000 / fpsTarget() && inFlight < MAX_INFLIGHT) {
       lastCaptureTs = now;
@@ -214,7 +254,7 @@ export default function Dashboard() {
 
   // ── Controles ────────────────────────────────────────────────────────────────
   function onConf(pct: number) { setConfPct(pct); sendConf(); }
-  function onSnapshot() { if (capturing()) exportSnapshot(videoEl, overlayEl, showVideo()); }
+  function onSnapshot() { if (isLive()) exportSnapshot(videoEl, overlayEl, true); }
 
   // ── Ciclo de vida ─────────────────────────────────────────────────────────────
   onMount(async () => {
@@ -223,11 +263,12 @@ export default function Dashboard() {
     ws.addEventListener('open', onOpen);
     ws.addEventListener('message', onMessage);
     if (ws.readyState === WebSocket.OPEN) sendConf();
-    await enumerateCams().catch(() => {});
-    await startCam().catch(() => {});                // auto-inicio; si falla, queda el botón
+    await enumerateCams().catch(() => {});           // primer listado (sin labels hasta dar permiso)
+    await startCam();                                // auto-inicio; si falla, queda el estado de error
   });
 
   onCleanup(() => {
+    disposed = true;
     ws.removeEventListener('open', onOpen);
     ws.removeEventListener('message', onMessage);
     stopCam();
@@ -259,23 +300,33 @@ export default function Dashboard() {
           <div class="relative w-full max-w-3xl rounded-md overflow-hidden bg-bg-surface"
             style={{ 'aspect-ratio': aspect() }}>
             <video ref={videoEl} autoplay playsinline muted
-              class="absolute inset-0 w-full h-full object-contain"
-              style={{ opacity: showVideo() ? 1 : 0 }} />
+              class="absolute inset-0 w-full h-full object-contain" />
             <canvas ref={overlayEl} class="absolute inset-0 w-full h-full object-contain" />
 
-            <Show when={capturing() && !hasDetections()}>
+            <Show when={isLive() && !hasDetections()}>
               <div class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
                 <span class="text-sm text-text-secondary">esperando objetos…</span>
               </div>
             </Show>
 
-            <Show when={!capturing()}>
+            <Show when={camState() === 'starting'}>
               <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-bg-panel">
-                <span class="text-sm text-text-secondary">Cámara detenida</span>
+                <Spinner />
+                <span class="text-sm text-text-secondary">Cargando cámara…</span>
+              </div>
+            </Show>
+
+            <Show when={camState() === 'idle' || camState() === 'error'}>
+              <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-bg-panel">
+                <span class="text-sm text-text-secondary">
+                  {camState() === 'error' ? 'No se pudo abrir la cámara' : 'Cámara detenida'}
+                </span>
                 <Show when={camError()}>
                   <span class="max-w-xs text-center text-xs text-text-secondary opacity-80">{camError()}</span>
                 </Show>
-                <button class={BTN} onClick={() => startCam().catch(() => {})}>Iniciar cámara</button>
+                <button class={BTN} onClick={() => startCam()}>
+                  {camState() === 'error' ? 'Reintentar' : 'Iniciar cámara'}
+                </button>
               </div>
             </Show>
 
@@ -303,8 +354,8 @@ export default function Dashboard() {
               </Show>
             </select>
             <div class="mt-3 flex items-center gap-2">
-              <button class={BTN} disabled={capturing()} onClick={() => startCam().catch(() => {})}>Iniciar</button>
-              <button class={BTN_GHOST} disabled={!capturing()} onClick={stopCam}>Detener</button>
+              <button class={BTN} disabled={camState() === 'starting' || isLive()} onClick={() => startCam()}>Iniciar</button>
+              <button class={BTN_GHOST} disabled={!isLive()} onClick={stopCam}>Detener</button>
               <span class="ml-auto font-mono text-xs text-text-secondary tabular">{frameSize() || '—'}</span>
             </div>
           </Section>
@@ -327,11 +378,6 @@ export default function Dashboard() {
                 <input type="range" min="2" max="30" step="1" value={fpsTarget()}
                   onInput={(e) => setFpsTarget(+e.currentTarget.value)} class="w-full accent-accent" />
               </div>
-              <label class="flex items-center gap-2 text-sm text-text-secondary cursor-pointer select-none">
-                <input type="checkbox" checked={showVideo()}
-                  onChange={(e) => setShowVideo(e.currentTarget.checked)} class="accent-accent" />
-                Mostrar cámara
-              </label>
             </div>
           </Section>
 
@@ -354,9 +400,9 @@ export default function Dashboard() {
             </div>
           </Section>
 
-          <div class="p-4">
+          <div class="px-4 pb-4">
             <button class={`${BTN} w-full flex items-center justify-center gap-2`}
-              disabled={!capturing()} onClick={onSnapshot}>
+              disabled={!isLive()} onClick={onSnapshot}>
               <IconDownload /> Capturar PNG
             </button>
           </div>
