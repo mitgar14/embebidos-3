@@ -10,6 +10,9 @@
 //
 // La cámara es una máquina de estados (idle/starting/live/error): "starting"
 // cubre todo el arranque (permiso + adquisición), distinto de "idle" detenida.
+// El auto-inicio solo ocurre con permiso 'granted' (Permissions API): sin gesto
+// del usuario, getUserMedia con permiso en "preguntar" lanza NotAllowedError
+// (típico tras un reload duro Ctrl+Shift+R, que no arrastra activación).
 
 import { createSignal, onMount, onCleanup, For, Show, type JSX } from 'solid-js';
 import { A } from '@solidjs/router';
@@ -87,6 +90,7 @@ export default function Dashboard() {
   const [cPaper, setCPaper]     = createSignal(0);
   const [cPlastic, setCPlastic] = createSignal(0);
   const [hasDetections, setHasDetections] = createSignal(false);
+  const [everStarted, setEverStarted]     = createSignal(false);   // ¿la cámara llegó a estar viva?
 
   const isLive = () => camState() === 'live';
 
@@ -97,6 +101,7 @@ export default function Dashboard() {
   let stream: MediaStream | null = null;
   let starting = false;      // guarda reentrancia de startCam
   let disposed = false;      // el componente se desmontó (cancela arranques en curso)
+  let permStatus: PermissionStatus | null = null;    // permiso de cámara (si la API existe)
   const pendingFrames = new Map<number, number>();   // seq -> sendTs
   let fpsWindow: number[] = [];
   const counts = { glass: 0, paper: 0, plastic: 0 };
@@ -166,6 +171,17 @@ export default function Dashboard() {
     if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
   }
 
+  // Estado del permiso de cámara via Permissions API (Chromium/Brave lo soportan).
+  // Si la API no existe devolvemos null y tratamos el permiso como "preguntar".
+  async function queryCamPermission(): Promise<PermissionStatus | null> {
+    try {
+      if (!navigator.permissions?.query) return null;
+      return await navigator.permissions.query({ name: 'camera' as PermissionName });
+    } catch {
+      return null;
+    }
+  }
+
   // Un intento de abrir la cámara. Lanza si falla; no toca el estado de error
   // (eso lo decide startCam tras agotar los reintentos).
   async function tryOpenCamera() {
@@ -185,6 +201,7 @@ export default function Dashboard() {
     captureCanvas.width = w; captureCanvas.height = h;
     overlayEl.width = w; overlayEl.height = h;
     setCamState('live');
+    setEverStarted(true);
     lastCaptureTs = 0;
     captureLoop();
   }
@@ -211,7 +228,7 @@ export default function Dashboard() {
       const denied = (lastErr as { name?: string })?.name === 'NotAllowedError';
       setCamState('error');
       setCamError(denied
-        ? 'Permiso de cámara denegado. Habilítalo en el navegador y reintenta.'
+        ? 'Permiso de cámara bloqueado o no concedido. Habilítalo desde el icono de cámara en la barra de direcciones y pulsa Reintentar.'
         : 'No se pudo abrir la cámara (en uso por otra app o no disponible).');
     }
   }
@@ -264,11 +281,32 @@ export default function Dashboard() {
     ws.addEventListener('message', onMessage);
     if (ws.readyState === WebSocket.OPEN) sendConf();
     await enumerateCams().catch(() => {});           // primer listado (sin labels hasta dar permiso)
-    await startCam();                                // auto-inicio; si falla, queda el estado de error
+
+    // Auto-inicio SOLO con permiso 'granted' persistente. Tras un reload duro no
+    // hay gesto del usuario; con el permiso en "preguntar", getUserMedia
+    // automático lanza NotAllowedError. Con 'granted' arranca sin gesto; si no,
+    // dejamos un arranque de un clic (el clic aporta el gesto y, al permitir, el
+    // permiso queda persistente → las siguientes recargas duras arrancan solas).
+    permStatus = await queryCamPermission();
+    if (permStatus) {
+      permStatus.onchange = () => {
+        if (permStatus?.state === 'granted' && !isLive() && !starting && !disposed) void startCam();
+      };
+    }
+    const state = permStatus?.state ?? 'prompt';
+    if (state === 'granted') {
+      await startCam();
+    } else if (state === 'denied') {
+      setCamState('error');
+      setCamError('Permiso de cámara bloqueado. Habilítalo desde el icono de cámara en la barra de direcciones y pulsa Reintentar.');
+    } else {
+      setCamState('idle');                           // 'prompt': un clic en "Iniciar cámara" (aporta el gesto)
+    }
   });
 
   onCleanup(() => {
     disposed = true;
+    if (permStatus) { permStatus.onchange = null; permStatus = null; }
     ws.removeEventListener('open', onOpen);
     ws.removeEventListener('message', onMessage);
     stopCam();
@@ -319,7 +357,8 @@ export default function Dashboard() {
             <Show when={camState() === 'idle' || camState() === 'error'}>
               <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-bg-panel">
                 <span class="text-sm text-text-secondary">
-                  {camState() === 'error' ? 'No se pudo abrir la cámara' : 'Cámara detenida'}
+                  {camState() === 'error' ? 'No se pudo abrir la cámara'
+                    : everStarted() ? 'Cámara detenida' : 'Activa la cámara'}
                 </span>
                 <Show when={camError()}>
                   <span class="max-w-xs text-center text-xs text-text-secondary opacity-80">{camError()}</span>
