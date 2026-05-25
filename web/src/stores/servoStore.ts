@@ -1,7 +1,7 @@
 // web/src/stores/servoStore.ts
 // Estado reactivo de los servos del ESP32.
-// Instancia a nivel de modulo (igual que wsStore.ts): una sola conexion MQTT
-// que sobrevive re-renders y navegacion entre rutas.
+// Instancia a nivel de módulo (igual que wsStore.ts): una sola conexión MQTT
+// que sobrevive re-renders y navegación entre rutas.
 
 import { createSignal } from 'solid-js';
 import { MqttClient, type MqttStatus } from '../lib/mqtt';
@@ -14,36 +14,36 @@ import {
 
 // ─── Signals de estado ────────────────────────────────────────────────────────
 
-/** Estado de la conexion al broker MQTT. */
+/** Estado de la conexión al broker MQTT. */
 export const [mqttStatus, setMqttStatus] = createSignal<MqttStatus>('connecting');
 
 /**
- * Estado del ESP32 segun el Last Will retenido del topic online:
- *   null  = sin informacion aun (timeout de 5 s no cumplido)
+ * Estado del ESP32 según el Last Will retenido del topic online:
+ *   null  = sin información aún (timeout de 5 s no cumplido)
  *   true  = online (firmware activo y conectado al broker)
  *   false = offline (firmware desconectado o timeout alcanzado)
  */
 export const [esp32Online, setEsp32Online] = createSignal<boolean | null>(null);
 
-/** Numero de servos activos segun la telemetria. */
+/** Número de servos activos según la telemetría. */
 export const [numServos, setNumServos] = createSignal<number>(0);
 
 /** Canales PCA9685 activos (ej. [0, 7, 8, 15]). */
 export const [channels, setChannels] = createSignal<number[]>([]);
 
-/** Angulos actuales de cada servo (grados, 0..180). */
+/** Ángulos actuales de cada servo (grados, 0..180). */
 export const [angles, setAngles] = createSignal<number[]>([]);
 
-/** Presets guardados en la NVS del ESP32: presets()[servo][slot] = angulo. */
+/** Presets guardados en la NVS del ESP32: presets()[servo][slot] = ángulo. */
 export const [presets, setPresets] = createSignal<number[][]>([]);
 
-/** Potencia de la señal Wi-Fi del ESP32 en dBm, o null si aun no llego. */
+/** Potencia de la señal Wi-Fi del ESP32 en dBm, o null si aún no llegó. */
 export const [rssi, setRssi] = createSignal<number | null>(null);
 
-/** Tiempo activo del ESP32 en segundos, o null si aun no llego. */
+/** Tiempo activo del ESP32 en segundos, o null si aún no llegó. */
 export const [uptimeSec, setUptimeSec] = createSignal<number | null>(null);
 
-// ─── Cliente MQTT (instancia unica a nivel de modulo) ─────────────────────────
+// ─── Cliente MQTT (instancia única a nivel de módulo) ─────────────────────────
 
 export const mqttClient = new MqttClient(
   'wss://broker.emqx.io:8084/mqtt',
@@ -51,8 +51,8 @@ export const mqttClient = new MqttClient(
 );
 
 // ─── Timeout de presencia (5 s) ───────────────────────────────────────────────
-// Si tras 5 s desde la primera conexion no llego ningun mensaje en el topic
-// online, consideramos que el ESP32 no esta conectado.
+// Si tras 5 s desde la primera conexión no llegó ningún mensaje en el topic
+// online, consideramos que el ESP32 no está conectado.
 
 let onlineResolved = false;
 
@@ -64,8 +64,8 @@ const presenceTimer = setTimeout(() => {
 
 // ─── Suscripciones y handlers ─────────────────────────────────────────────────
 
-// Suscribir DENTRO de 'connect' garantiza la re-suscripcion en cada reconexion
-// automatica (clean: true borra las suscripciones al desconectarse).
+// Suscribir DENTRO de 'connect' garantiza la re-suscripción en cada reconexión
+// automática (clean: true borra las suscripciones al desconectarse).
 mqttClient.on('message', (topic: string, payload: Buffer) => {
   if (topic === topicOnline()) {
     const val = payload.toString();
@@ -97,7 +97,7 @@ mqttClient.on('message', (topic: string, payload: Buffer) => {
   }
 });
 
-// Suscribirse a los topics en cada (re)conexion al broker.
+// Suscribirse a los topics en cada (re)conexión al broker.
 // El tipo de 'connect' no es parte de la interfaz simplificada MqttClient,
 // pero el cliente subyacente mqtt.js lo emite; accedemos via la instancia.
 (mqttClient as unknown as { _client: { on: (e: string, cb: () => void) => void } })
@@ -106,11 +106,11 @@ mqttClient.on('message', (topic: string, payload: Buffer) => {
     mqttClient.subscribe(topicOnline());
   });
 
-// ─── Funcion de publicacion de comandos ───────────────────────────────────────
+// ─── Función de publicación de comandos ───────────────────────────────────────
 
 /**
  * Publica un comando JSON en el topic cmd del ESP32.
- * La pagina de control importa esta funcion; no expone topicCmd directamente.
+ * La página de control importa esta función; no expone topicCmd directamente.
  */
 export function publish(payload: string): void {
   mqttClient.publish(topicCmd(), payload);
@@ -118,7 +118,7 @@ export function publish(payload: string): void {
 
 /**
  * Fuerza una nueva solicitud de estado al ESP32.
- * Util para el boton "Reintentar conexion" cuando el broker ya esta activo.
+ * Útil para el botón "Reintentar conexión" cuando el broker ya está activo.
  */
 export function requestState(): void {
   if (mqttStatus() === 'active') {

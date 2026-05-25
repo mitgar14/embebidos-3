@@ -29,9 +29,9 @@ export class MqttClient {
     this._client = mqttLib.connect(url, opts);
 
     // Mapeo de eventos mqtt.js al vocabulario MqttStatus.
-    // 'connect' se emite en la conexion inicial Y en cada reconexion automatica
+    // 'connect' se emite en la conexión inicial Y en cada reconexión automática
     // (con reconnectPeriod activo), por lo que suscribirse dentro de este handler
-    // garantiza que los topics se re-registran tras cada reconexion (clean: true).
+    // garantiza que los topics se re-registran tras cada reconexión (clean: true).
     this._client.on('connect', () => this._setStatus('active'));
     this._client.on('reconnect', () => this._setStatus('reconnecting'));
     this._client.on('close', () => this._setStatus('closed'));

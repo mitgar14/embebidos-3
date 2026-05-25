@@ -26,7 +26,7 @@ export class InfoPanel {
   }
 
   showOverview(total) {
-    this.title.textContent = 'Vista general — todas las conexiones';
+    this.title.textContent = 'Vista general · todas las conexiones';
     this.description.textContent =
       'Todas las conexiones visibles a la vez. Usa el ratón para orbitar y haz clic en un pin ' +
       'para inspeccionarlo. Usa "Paso a paso" para revisarlas una por una.';

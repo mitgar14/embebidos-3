@@ -374,7 +374,8 @@ export default function Guia() {
       {/* Header del sitio */}
       <header class="flex items-center justify-between border-b border-border px-6 h-14 shrink-0">
         <div class="flex items-center gap-3">
-          <A href="#/" class={BTN} aria-label="Volver al hub">
+          <A href="/" aria-label="Volver al inicio"
+            class="flex items-center text-text-secondary hover:text-text-primary transition-colors">
             <IconBack />
           </A>
           <span class="font-semibold text-text-primary">Guía de conexión</span>
@@ -417,7 +418,7 @@ export default function Guia() {
               <li class="flex gap-2"><span class="text-text-primary font-medium">1</span> ESP32-WROOM-32 DevKit V1</li>
               <li class="flex gap-2"><span class="text-text-primary font-medium">1</span> Expansion Board (Electrodemy)</li>
               <li class="flex gap-2"><span class="text-text-primary font-medium">1</span> PCA9685 16-ch PWM I²C</li>
-              <li class="flex gap-2"><span class="text-text-primary font-medium">4</span> Tower Pro SG90 — canales 0–3</li>
+              <li class="flex gap-2"><span class="text-text-primary font-medium">4</span> Tower Pro SG90 · canales 0–3</li>
               <li class="flex gap-2"><span class="text-text-primary font-medium">6+</span> Cables Dupont H-H ~10 cm</li>
               <li class="flex gap-2"><span class="text-text-primary font-medium">1</span> Cable Micro-USB (datos)</li>
             </ul>

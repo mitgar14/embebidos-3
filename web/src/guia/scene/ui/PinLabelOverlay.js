@@ -161,7 +161,11 @@ export class PinLabelOverlay {
 
     const gap = 6;
     const margin = 14;
-    const rowY = side === 'top' ? margin : h - margin - 24;
+    // La barra de controles flotante vive abajo-centro (bottom-4 + alto del botón);
+    // reservamos su alto completo para que las etiquetas 'bottom' queden por encima
+    // de ella en cualquier ancho de viewport (si no, caen detrás: overlay z-2 < barra z-10).
+    const bottomReserve = side === 'bottom' ? 64 : 0;
+    const rowY = side === 'top' ? margin : h - margin - 24 - bottomReserve;
 
     for (const e of entries) {
       const r = e.div.getBoundingClientRect();

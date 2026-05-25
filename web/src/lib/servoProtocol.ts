@@ -7,8 +7,8 @@
 
 const DEVICE_ID_KEY = 'servo_device_id';
 
-/** ID largo y propio del proyecto para no colisionar en el broker publico EMQX.
- *  El firmware tiene 'ece88b61'; aqui usamos un ID mas descriptivo y privado. */
+/** ID largo y propio del proyecto para no colisionar en el broker público EMQX.
+ *  El firmware tiene 'ece88b61'; aquí usamos un ID más descriptivo y privado. */
 const DEFAULT_DEVICE_ID = 'tiny-trash-esp32-ctrl';
 
 export function getDeviceId(): string {
@@ -26,7 +26,7 @@ export function topicCmd(): string {
   return `servos/${getDeviceId()}/cmd`;
 }
 
-/** Topic de telemetria del ESP32 (suscribir, retained). */
+/** Topic de telemetría del ESP32 (suscribir, retained). */
 export function topicState(): string {
   return `servos/${getDeviceId()}/state`;
 }
@@ -38,7 +38,7 @@ export function topicOnline(): string {
 
 // ─── Comandos JSON ────────────────────────────────────────────────────────────
 
-/** Mover un servo a un angulo (0..180). */
+/** Mover un servo a un ángulo (0..180). */
 export function cmdMove(servo: number, angle: number): string {
   return JSON.stringify({ action: 'move', servo, angle });
 }
@@ -48,7 +48,7 @@ export function cmdMoveAll(angles: number[]): string {
   return JSON.stringify({ action: 'move_all', angles });
 }
 
-/** Guardar la posicion actual como preset. */
+/** Guardar la posición actual como preset. */
 export function cmdSavePreset(servo: number, slot: number, angle: number): string {
   return JSON.stringify({ action: 'save_preset', servo, slot, angle });
 }

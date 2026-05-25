@@ -2,15 +2,15 @@
  * Fuente de verdad: pines, conexiones y pasos.
  *
  * Topología:
- *   PSU (externo) —
+ *   PSU (externo) -
  *                  v
- *   Expansion Board <— ESP32 (embebido, secundario)
+ *   Expansion Board <- ESP32 (embebido, secundario)
  *        |
  *        v
  *      PCA9685
  *
  * Las conexiones primarias salen de la EXPANSION BOARD (bloques I2C y de potencia).
- * Los pines del ESP32 quedan como secundarios — visibles solo con el toggle "todos".
+ * Los pines del ESP32 quedan como secundarios, visibles solo con el toggle "todos".
  */
 
 export const WIRE_COLORS = {
@@ -24,7 +24,7 @@ export const WIRE_COLORS = {
 };
 
 /* ════════════════════════════════════════════════════════════
-   1. ESP32-WROOM-32 DOIT DevKit V1 — pinout completo (referencia)
+   1. ESP32-WROOM-32 DOIT DevKit V1 · pinout completo (referencia)
    ════════════════════════════════════════════════════════════ */
 export const ESP32_PINS = {
   'EN':    { side: 'left', row: 0,  label: 'EN',   type: 'EN',    sub: 'Reset' },
@@ -61,7 +61,7 @@ export const ESP32_PINS = {
 };
 
 /* ════════════════════════════════════════════════════════════
-   2. Expansion Board — bloques principales
+   2. Expansion Board · bloques principales
    ════════════════════════════════════════════════════════════ */
 
 // 13 GPIOs por lado se exponen como tripletes S(signal)/V(voltaje)/G(GND)
@@ -89,7 +89,7 @@ export const EXP_PINS = {
 };
 
 /* ════════════════════════════════════════════════════════════
-   3. PCA9685 — header lógico + V+ terminal
+   3. PCA9685 · header lógico + V+ terminal
    ════════════════════════════════════════════════════════════ */
 export const PCA_PINS = {
   'GND':   { row: 0, label: 'GND', type: 'GND' },
@@ -101,7 +101,7 @@ export const PCA_PINS = {
 };
 
 /* ════════════════════════════════════════════════════════════
-   4. Pasos — todas las conexiones primarias salen de la expansion board
+   4. Pasos · todas las conexiones primarias salen de la expansion board
    ════════════════════════════════════════════════════════════ */
 export const STEPS = [
   {
@@ -115,7 +115,7 @@ export const STEPS = [
       'Conecta cualquier GND del bloque de alimentación de la expansion board al GND del header ' +
       'lógico del PCA9685. La expansion ya enruta el GND del ESP32 a un bloque accesible (3 pines ' +
       'duplicados). Sin tierra común el bus I²C falla aunque las señales lleguen.',
-    code: '// Bloque PWR: 3x GND, 3x 5V, 3x 3V3 — todos compartidos.'
+    code: '// Bloque PWR: 3x GND, 3x 5V, 3x 3V3, todos compartidos.'
   },
   {
     id: 'vcc',
@@ -132,7 +132,7 @@ export const STEPS = [
   },
   {
     id: 'sda',
-    title: '3 · I²C — SDA (datos)',
+    title: '3 · I²C: SDA (datos)',
     from: { board: 'exp', pin: 'I2C_D21' },
     to:   { board: 'pca', pin: 'SDA' },
     color: 'SDA',
@@ -144,7 +144,7 @@ export const STEPS = [
   },
   {
     id: 'scl',
-    title: '4 · I²C — SCL (reloj)',
+    title: '4 · I²C: SCL (reloj)',
     from: { board: 'exp', pin: 'I2C_D22' },
     to:   { board: 'pca', pin: 'SCL' },
     color: 'SCL',
@@ -156,7 +156,7 @@ export const STEPS = [
   },
   {
     id: 'vplus',
-    title: '5 · V+ — Alimentación de servos (5V del expansor)',
+    title: '5 · V+: Alimentación de servos (5V del expansor)',
     from: { board: 'exp', pin: 'PWR_5V' },
     to:   { board: 'pca', pin: 'TERM_V+' },
     color: 'VPLUS',
@@ -166,17 +166,17 @@ export const STEPS = [
       'permite mover servos pequeños (SG90) sin fuente externa, PERO compartes el regulador ' +
       'AMS1117 (~1 A): si dos servos arrancan a la vez bajo carga, el ESP32 hará brownout. ' +
       'Para uso serio o servos MG996R, usa una fuente externa y une GND común.',
-    code: '// CH0..CH15 ahora reciben 5V en V+ del header — los servos se mueven.'
+    code: '// CH0..CH15 ahora reciben 5V en V+ del header, los servos se mueven.'
   },
   {
     id: 'oe',
-    title: '6 · OE — Output Enable (opcional)',
+    title: '6 · OE: Output Enable (opcional)',
     from: { board: 'exp', pin: 'D5_S' },
     to:   { board: 'pca', pin: 'OE' },
     color: 'OE',
     required: false,
     description:
-      'OE es activo en BAJO. Lo conectamos al pin S (signal) del triplete D5 — es el pin de la ' +
+      'OE es activo en BAJO. Lo conectamos al pin S (signal) del triplete D5, es el pin de la ' +
       'columna amarilla. Permite cortar todas las salidas PWM en una sola instrucción.',
     code: 'pinMode(5, OUTPUT); digitalWrite(5, HIGH); // todas las salidas off'
   }

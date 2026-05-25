@@ -1,6 +1,6 @@
 // web/src/routes/control.tsx
 // Control de servos ESP32 (Fase 5, Plan 03, CTRL-01..03).
-// Estado dual: panel de control autoconfigurado por telemetria MQTT (ESP32 online)
+// Estado dual: panel de control autoconfigurado por telemetría MQTT (ESP32 online)
 // o instructivo de flasheo (ESP32 offline/ausente). Sin backend FastAPI.
 
 import { createSignal, createEffect, For, Show, onCleanup, type JSX } from 'solid-js';
@@ -31,7 +31,7 @@ import {
   cmdLoadPreset,
 } from '../lib/servoProtocol';
 
-// ─── Constantes de boton ──────────────────────────────────────────────────────
+// ─── Constantes de botón ──────────────────────────────────────────────────────
 
 const BTN =
   'rounded-md border border-border px-3 py-1.5 text-sm text-text-primary ' +
@@ -80,7 +80,7 @@ function IconRefresh() {
   );
 }
 
-// ─── Tooltip informativo (mismo patron que labelling.tsx) ─────────────────────
+// ─── Tooltip informativo (mismo patrón que labelling.tsx) ─────────────────────
 
 function InfoTip(props: {
   children: JSX.Element;
@@ -98,7 +98,7 @@ function InfoTip(props: {
     >
       <button
         type="button"
-        aria-label={props.label ?? 'Mas informacion'}
+        aria-label={props.label ?? 'Más información'}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         class="flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors"
@@ -135,7 +135,7 @@ function InfoTip(props: {
 }
 
 // ─── Gauge SVG semicircular (arco de 180 grados) ─────────────────────────────
-// pathLength=100 simplifica el calculo: dashoffset = 100 - (angle/180)*100.
+// pathLength=100 simplifica el cálculo: dashoffset = 100 - (angle/180)*100.
 // El gradiente usa --accent en vez de los colores del repo original.
 
 function ServoGauge(props: { angle: number; size?: number }) {
@@ -153,7 +153,7 @@ function ServoGauge(props: { angle: number; size?: number }) {
     return `M ${C - R} ${Y} A ${R} ${R} 0 0 1 ${C + R} ${Y}`;
   };
 
-  // stroke-dashoffset: 0 = lleno (180 grados); 100 = vacio (0 grados).
+  // stroke-dashoffset: 0 = lleno (180 grados); 100 = vacío (0 grados).
   const offset = () => 100 - (Math.max(0, Math.min(180, props.angle)) / 180) * 100;
 
   return (
@@ -190,7 +190,7 @@ function ServoGauge(props: { angle: number; size?: number }) {
         stroke-dashoffset={offset()}
         style={{ transition: 'stroke-dashoffset 120ms ease-out' }}
       />
-      {/* Angulo central */}
+      {/* Ángulo central */}
       <text
         x={cx()}
         y={cy() - r() * 0.08}
@@ -211,12 +211,12 @@ function ServoGauge(props: { angle: number; size?: number }) {
 
 // ─── Utilidades ───────────────────────────────────────────────────────────────
 
-/** Retardo para la serializacion de movimientos masivos (brownout protection). */
+/** Retardo para la serialización de movimientos masivos (brownout protection). */
 function delay(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
 }
 
-/** Throttle simple: devuelve un handler que no dispara mas rapido que `ms`. */
+/** Throttle simple: devuelve un handler que no dispara más rápido que `ms`. */
 function makeThrottle<T extends unknown[]>(
   fn: (...args: T) => void,
   ms: number,
@@ -241,10 +241,10 @@ function ServoCard(props: {
   const angle = () => angles()[i] ?? 90;
   const channel = () => channels()[i] ?? i;
 
-  // Angulo local del slider (se actualiza optimistamente antes de la telemetria).
+  // Ángulo local del slider (se actualiza optimistamente antes de la telemetría).
   const [localAngle, setLocalAngle] = createSignal(angle());
 
-  // Sincronizar localAngle con la telemetria cuando llega del broker.
+  // Sincronizar localAngle con la telemetría cuando llega del broker.
   createEffect(() => {
     setLocalAngle(angle());
   });
@@ -295,12 +295,12 @@ function ServoCard(props: {
         value={localAngle()}
         onInput={onSlider}
         class="w-full accent-[var(--accent)] cursor-pointer"
-        aria-label={`Angulo del servo ${i + 1}`}
+        aria-label={`Ángulo del servo ${i + 1}`}
       />
 
-      {/* Input numerico sincronizado */}
+      {/* Input numérico sincronizado */}
       <div class="flex items-center gap-2">
-        <label class="text-xs text-text-secondary shrink-0">Angulo</label>
+        <label class="text-xs text-text-secondary shrink-0">Ángulo</label>
         <input
           type="number"
           min="0"
@@ -309,7 +309,7 @@ function ServoCard(props: {
           onInput={onNumInput}
           class="w-16 rounded border border-border bg-bg-surface px-2 py-1 text-xs text-text-primary
                  focus:outline-none focus:border-accent font-mono tabular"
-          aria-label={`Valor numerico del servo ${i + 1}`}
+          aria-label={`Valor numérico del servo ${i + 1}`}
         />
         <span class="text-xs text-text-secondary">deg</span>
       </div>
@@ -362,12 +362,12 @@ export default function Control() {
   // Servo que tiene un movimiento pendiente (brownout protection entre tarjetas).
   const [pendingServo, setPendingServo] = createSignal<number | null>(null);
 
-  // Flag de operacion masiva en curso (deshabilita acciones globales durante la serializacion).
+  // Flag de operación masiva en curso (deshabilita acciones globales durante la serialización).
   const [massRunning, setMassRunning] = createSignal(false);
 
   onCleanup(() => {
     // El cliente MQTT persiste entre rutas (instancia a nivel de modulo).
-    // No hacemos destroy() aqui para no interrumpir la conexion.
+    // No hacemos destroy() aquí para no interrumpir la conexión.
   });
 
   // ─── Acciones masivas (serializadas, brownout protection) ──────────────────
@@ -400,7 +400,7 @@ export default function Control() {
     const id = deviceIdInput().trim();
     if (!id) return;
     setDeviceId(id);
-    // Re-suscribirse a los nuevos topics si el broker esta activo.
+    // Re-suscribirse a los nuevos topics si el broker está activo.
     if (mqttStatus() === 'active') {
       mqttClient.subscribe(topicState());
       mqttClient.subscribe(topicOnline());
@@ -423,13 +423,14 @@ export default function Control() {
       {/* Header */}
       <header class="flex items-center justify-between border-b border-border px-6 h-14 shrink-0">
         <div class="flex items-center gap-3">
-          <A href="#/" class={BTN + ' flex items-center gap-1.5'} aria-label="Volver al hub">
+          <A href="/" aria-label="Volver al inicio"
+            class="flex items-center text-text-secondary hover:text-text-primary transition-colors">
             <IconBack />
           </A>
           <span class="font-semibold text-text-primary">Control de servos</span>
         </div>
 
-        {/* Indicadores de conexion + ThemeToggle */}
+        {/* Indicadores de conexión + ThemeToggle */}
         <div class="flex items-center gap-4">
           {/* Broker MQTT */}
           <div class="flex items-center gap-1.5">
@@ -454,7 +455,7 @@ export default function Control() {
                 class="w-2 h-2 rounded-full flex-shrink-0"
                 style={{ 'background-color': '#10b981' }}
                 role="status"
-                aria-label="ESP32 en linea"
+                aria-label="ESP32 en línea"
               />
             </Show>
             <span class="text-xs text-text-secondary">
@@ -469,7 +470,7 @@ export default function Control() {
       {/* Cuerpo principal */}
       <main class="flex-1 flex flex-col">
 
-        {/* Estado intermedio: conectando al broker (esp32Online === null y aun en timeout) */}
+        {/* Estado intermedio: conectando al broker (esp32Online === null y aún en timeout) */}
         <Show when={esp32Online() === null}>
           <div class="flex-1 flex flex-col items-center justify-center gap-3">
             <div
@@ -504,7 +505,7 @@ export default function Control() {
                 Acciones globales
               </span>
 
-              {/* Botones de accion */}
+              {/* Botones de acción */}
               <div class="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -569,7 +570,7 @@ export default function Control() {
                 </span>
               </div>
 
-              {/* Telemetria RSSI + uptime */}
+              {/* Telemetría RSSI + uptime */}
               <Show when={rssi() !== null}>
                 <p class="text-xs text-text-secondary tabular">
                   RSSI {rssi()} dBm · uptime {uptimeSec()} s
@@ -585,26 +586,26 @@ export default function Control() {
           <div class="flex-1 flex flex-col items-center justify-center px-6 py-12">
             <div class="w-full max-w-xl flex flex-col gap-6">
 
-              {/* Titulo */}
+              {/* Título */}
               <div>
                 <h1 class="text-xl font-semibold text-text-primary">
                   ESP32 no encontrado
                 </h1>
                 <p class="mt-1 text-sm text-text-secondary">
-                  No se detecto el firmware. Sigue estos pasos para flashearlo:
+                  No se detectó el firmware. Sigue estos pasos para flashearlo:
                 </p>
               </div>
 
               {/* Pasos del instructivo */}
               <ol class="flex flex-col gap-4 list-none">
 
-                {/* Paso 1: Arduino IDE y librerias */}
+                {/* Paso 1: Arduino IDE y librerías */}
                 <li class="flex flex-col gap-2">
                   <span class="text-sm font-medium text-text-primary">
-                    1. Arduino IDE y librerias
+                    1. Arduino IDE y librerías
                   </span>
                   <p class="text-xs text-text-secondary">
-                    Abre el Library Manager e instala las siguientes librerias. Luego
+                    Abre el Library Manager e instala las siguientes librerías. Luego
                     agrega el soporte de placas ESP32 en el Boards Manager.
                   </p>
                   <pre class="border border-border bg-bg-surface rounded-md px-3 py-2 font-mono text-xs text-text-secondary overflow-x-auto">
@@ -623,7 +624,7 @@ esp32 by Espressif (Boards Manager)`}</code>
                   <p class="text-xs text-text-secondary">
                     Copia <code class="font-mono bg-bg-surface px-1 rounded">secrets.h.example</code> a{' '}
                     <code class="font-mono bg-bg-surface px-1 rounded">secrets.h</code> y
-                    completa tu SSID y contrasena. En{' '}
+                    completa tu SSID y contraseña. En{' '}
                     <code class="font-mono bg-bg-surface px-1 rounded">config.h</code>{' '}
                     ajusta el <code class="font-mono bg-bg-surface px-1 rounded">DEVICE_ID</code> al
                     valor que la UI espera:
@@ -631,7 +632,7 @@ esp32 by Espressif (Boards Manager)`}</code>
                   <pre class="border border-border bg-bg-surface rounded-md px-3 py-2 font-mono text-xs text-text-secondary overflow-x-auto">
                     <code>{`// firmware/esp32_servo_controller/config.h
 #define DEVICE_ID  "${getDeviceId()}"
-// (debe coincidir con el ID configurado en esta pagina)`}</code>
+// (debe coincidir con el ID configurado en esta página)`}</code>
                   </pre>
                 </li>
 
@@ -643,7 +644,7 @@ esp32 by Espressif (Boards Manager)`}</code>
                   <p class="text-xs text-text-secondary">
                     Selecciona la placa <strong class="text-text-primary">ESP32 Dev Module</strong>{' '}
                     y el puerto COM correcto, luego sube el sketch. Abre el monitor serie
-                    a 115200 baud: deberas ver el DEVICE_ID, la conexion Wi-Fi y el estado
+                    a 115200 baud: deberás ver el DEVICE_ID, la conexión Wi-Fi y el estado
                     MQTT <code class="font-mono bg-bg-surface px-1 rounded">OK</code>.
                   </p>
                   <pre class="border border-border bg-bg-surface rounded-md px-3 py-2 font-mono text-xs text-text-secondary overflow-x-auto">
@@ -681,16 +682,16 @@ DEVICE_ID = ${getDeviceId()}
                 </span>
               </div>
 
-              {/* Boton de reintento */}
+              {/* Botón de reintento */}
               <div class="flex items-center gap-3">
                 <button
                   type="button"
                   class={BTN + ' flex items-center gap-2'}
-                  aria-label="Reintentar conexion con el ESP32"
+                  aria-label="Reintentar conexión con el ESP32"
                   onClick={() => requestState()}
                 >
                   <IconRefresh />
-                  Reintentar conexion
+                  Reintentar conexión
                 </button>
 
                 {/* Nota de seguridad */}
@@ -699,9 +700,9 @@ DEVICE_ID = ${getDeviceId()}
                   placement="top"
                   width="w-80"
                 >
-                  El broker EMQX es publico. Usa un DEVICE_ID propio para no colisionar
-                  con otros usuarios. Para produccion, monta tu propio Mosquitto con TLS
-                  y autenticacion.
+                  El broker EMQX es público. Usa un DEVICE_ID propio para no colisionar
+                  con otros usuarios. Para producción, monta tu propio Mosquitto con TLS
+                  y autenticación.
                 </InfoTip>
               </div>
             </div>

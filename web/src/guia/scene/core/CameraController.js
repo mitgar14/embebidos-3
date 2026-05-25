@@ -4,7 +4,7 @@ import { FlyController } from './FlyController.js';
 
 /**
  * Gestor de cámara con DOS modos:
- *  - 'orbit' (default): OrbitControls relajado — sin tope superior/inferior,
+ *  - 'orbit' (default): OrbitControls relajado, sin tope superior/inferior,
  *    distancia min/max amplias, pan en espacio de pantalla.
  *  - 'fly':   FlyController FPS con WASD + drag.
  *
@@ -16,7 +16,7 @@ export class CameraController {
     this.camera = camera;
     this.dom = domElement;
 
-    // Modo orbit (default) — sin restricciones de polar
+    // Modo orbit (default), sin restricciones de polar
     this.orbit = new OrbitControls(camera, domElement);
     this.orbit.enableDamping = true;
     this.orbit.dampingFactor = 0.08;
