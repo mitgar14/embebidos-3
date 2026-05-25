@@ -1,11 +1,11 @@
 // web/src/stores/nanoStore.ts
-// Estado del Nano para mostrar inline en el hub (HUB-02).
-// La conexión la provee wsStore (wsStatus); acá agregamos:
+// Estado del Nano compartido entre el hub (HUB-02) y el Dashboard (DASH-02).
 //  - lastMessageAt: timestamp del último mensaje no-pong del WS (frame/detección
 //    del Nano), o sea la última inferencia recibida.
-//  - nanoHealth: sondeo de /health, solo cuando el WS NO está activo (cuando lo
-//    está, la propia conexión ya prueba que el Nano vive; así evitamos ruido de
-//    CORS en el caso normal de la demo).
+//  - nanoHealth / gpuTempC / ramMb: sondeo de /health solo con el WS activo. El
+//    Nano expone CORS (el dashboard previo ya hacía fetch desde el browser);
+//    sirve la temperatura de GPU y la RAM libre al Dashboard. No sondeamos con
+//    el WS caído: ya sabemos que está inalcanzable y evitamos ruido en consola.
 
 import { createSignal } from 'solid-js';
 import { ws, wsStatus } from './wsStore';
@@ -14,6 +14,8 @@ import { getWsUrl } from '../lib/ws';
 export type NanoHealth = 'ok' | 'down' | 'unknown';
 
 export const [nanoHealth, setNanoHealth]       = createSignal<NanoHealth>('unknown');
+export const [gpuTempC, setGpuTempC]           = createSignal<number | null>(null);
+export const [ramMb, setRamMb]                 = createSignal<number | null>(null);
 export const [lastMessageAt, setLastMessageAt] = createSignal<number | null>(null);
 
 // Cada mensaje no-pong del WS es un frame/detección: marca la última inferencia.
@@ -34,7 +36,13 @@ async function probeHealth(): Promise<void> {
   const timer = setTimeout(() => ctrl.abort(), 3000);
   try {
     const r = await fetch(healthUrl(), { signal: ctrl.signal });
-    setNanoHealth(r.ok ? 'ok' : 'down');
+    if (!r.ok) { setNanoHealth('down'); return; }
+    setNanoHealth('ok');
+    const j = await r.json().catch(() => null);
+    if (j) {
+      if (typeof j.gpu_temp_c === 'number')       setGpuTempC(j.gpu_temp_c);
+      if (typeof j.ram_available_mb === 'number') setRamMb(j.ram_available_mb);
+    }
   } catch {
     setNanoHealth('down');
   } finally {
@@ -42,7 +50,10 @@ async function probeHealth(): Promise<void> {
   }
 }
 
-// Solo sondeamos cuando el WS no está activo (necesitamos el dato extra solo si
-// la conexión no nos lo da). Cuando el WS está activo, lo dejamos quieto.
-setInterval(() => { if (wsStatus() !== 'active') probeHealth(); }, 8000);
-probeHealth();
+// Sondeamos /health SOLO con el WS activo: si el WS conecta, el Nano es
+// alcanzable y /health responde sin error; si está caído, ya lo sabemos por
+// wsStatus y golpear /health solo generaría errores de red en consola
+// (ERR_CONNECTION_TIMED_OUT no es capturable por JS). Cadencia 3s como el
+// dashboard previo; además sondeamos al instante en cada (re)conexión.
+ws.addEventListener('open', () => { void probeHealth(); });
+setInterval(() => { if (wsStatus() === 'active') void probeHealth(); }, 3000);

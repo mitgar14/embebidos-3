@@ -32,13 +32,13 @@ export function NanoStatus() {
   const id = setInterval(() => setNow(Date.now()), 1000);
   onCleanup(() => clearInterval(id));
 
-  // Salud: el WS activo ya prueba que el Nano vive; nunca mostramos "caída" si
-  // el WS está conectado (evita falsos negativos por CORS en el sondeo /health).
+  // Salud: con el WS activo, nanoHealth (sondeo /health) está fresco y puede
+  // marcar "degradada" si el endpoint falla pese a la conexión. Con el WS caído
+  // no sondeamos /health, así que la salud la deriva el propio wsStatus.
   const salud = () => {
-    if (wsStatus() === 'active') return 'operativo';
-    if (nanoHealth() === 'ok')   return 'operativo';
-    if (nanoHealth() === 'down') return 'caída';
-    return '—';
+    if (wsStatus() === 'active') return nanoHealth() === 'down' ? 'degradada' : 'operativo';
+    if (wsStatus() === 'closed') return 'caída';
+    return 'enlazando';   // connecting / reconnecting
   };
 
   return (
