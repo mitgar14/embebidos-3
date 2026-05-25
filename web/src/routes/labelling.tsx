@@ -10,6 +10,10 @@ import { A } from '@solidjs/router';
 import JSZip from 'jszip';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { WONG, CLASS_LABEL_ES, type ClsName } from '../lib/detection';
+import { saveBlob, saveMeta, loadSession, clearSession } from '../lib/labelStore';
+
+// id estable por imagen (clave en IndexedDB). randomUUID existe en contexto seguro (localhost).
+const uid = () => (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
 const CLASSES: ClsName[] = ['glass', 'paper', 'plastic'];
 const CLASS_ID: Record<ClsName, number> = { glass: 0, paper: 1, plastic: 2 };
@@ -18,7 +22,7 @@ const CLASS_ID: Record<ClsName, number> = { glass: 0, paper: 1, plastic: 2 };
 // (no en el del canvas) hace el export YOLO directo y estable ante el zoom/fit.
 interface Box { x: number; y: number; w: number; h: number; cls: ClsName; }
 interface LabImage {
-  name: string; url: string; file: File;
+  id: string; name: string; url: string; file: File;
   w: number; h: number; img: HTMLImageElement; boxes: Box[];
 }
 type HandleId = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
@@ -77,6 +81,27 @@ function IconInfo() {
     </svg>
   );
 }
+function IconGrid() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+    </svg>
+  );
+}
+function IconTrash() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3 6h18" />
+      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    </svg>
+  );
+}
 
 // Tooltip informativo: elemento gráfico propio (role=tooltip), NUNCA el title
 // nativo, igual al patrón del hub. placement controla si abre hacia arriba
@@ -130,6 +155,7 @@ export default function Labelling() {
   const [exporting, setExporting] = createSignal(false);
   const [dragOver, setDragOver]   = createSignal(false);
   const [hoverCursor, setHoverCursor] = createSignal('crosshair'); // forma del cursor según la zona
+  const [view, setView]           = createSignal<'editor' | 'gallery'>('editor');
 
   const cur = () => images()[idx()];
   const refresh = () => bump(0);
@@ -355,13 +381,15 @@ export default function Labelling() {
       const url = URL.createObjectURL(file);
       try {
         const img = await loadImage(url);
-        loaded.push({ name: file.name, url, file, w: img.naturalWidth, h: img.naturalHeight, img, boxes: [] });
+        loaded.push({ id: uid(), name: file.name, url, file, w: img.naturalWidth, h: img.naturalHeight, img, boxes: [] });
       } catch { URL.revokeObjectURL(url); }
     }
     if (!loaded.length) return;
     const wasEmpty = images().length === 0;
     setImages([...images(), ...loaded]);
     if (wasEmpty) setIdx(0);
+    // Persistir los blobs de las imágenes nuevas (la metadata la guarda el autosave).
+    for (const im of loaded) void saveBlob(im.id, { name: im.name, blob: im.file, w: im.w, h: im.h }).catch(() => {});
     requestAnimationFrame(() => { resizeCanvas(); redraw(); });
   }
   function onFiles(e: Event) {
@@ -434,6 +462,31 @@ export default function Labelling() {
   const totalBoxes = () => { tick(); return images().reduce((s, im) => s + im.boxes.length, 0); };
   const annotated  = () => { tick(); return images().filter((im) => im.boxes.length > 0).length; };
 
+  // ── Persistencia de sesión (IndexedDB, ventana de 30 min) ────────────────────
+  let hydrated = false;          // no guardar hasta intentar restaurar (evita pisar con vacío)
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  function persistNow() {
+    const ims = images();
+    void saveMeta({
+      savedAt: Date.now(),
+      idx: idx(),
+      order: ims.map((im) => im.id),
+      boxes: Object.fromEntries(ims.map((im) => [im.id, im.boxes])),
+    }).catch(() => {});
+  }
+  function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(persistNow, 600); }
+  // Cualquier cambio de imágenes, índice o edición (tick) reprograma un guardado
+  // liviano de metadata; los blobs se guardan aparte al cargar las imágenes.
+  createEffect(() => { images(); idx(); tick(); if (hydrated) scheduleSave(); });
+
+  async function clearAll() {
+    if (images().length && !confirm('¿Vaciar todas las imágenes y anotaciones de esta sesión?')) return;
+    clearTimeout(saveTimer);
+    images().forEach((im) => URL.revokeObjectURL(im.url));
+    setImages([]); setIdx(0); setSelected(-1); setView('editor');
+    await clearSession().catch(() => {});
+  }
+
   function resizeCanvas() {
     if (!canvas || !wrap) return;
     const r = wrap.getBoundingClientRect();
@@ -451,8 +504,33 @@ export default function Labelling() {
     onCleanup(() => {
       window.removeEventListener('keydown', onKey);
       ro.disconnect();
+      clearTimeout(saveTimer);
       images().forEach((im) => URL.revokeObjectURL(im.url));
     });
+
+    // Restaurar sesión guardada (silencioso) si está dentro de la ventana de 30 min.
+    void (async () => {
+      try {
+        const s = await loadSession();
+        if (s && s.items.length) {
+          const restored: LabImage[] = [];
+          for (const it of s.items) {
+            const url = URL.createObjectURL(it.blob);
+            try {
+              const img = await loadImage(url);
+              const file = new File([it.blob], it.name, { type: it.blob.type });
+              restored.push({ id: it.id, name: it.name, url, file, w: it.w, h: it.h, img, boxes: it.boxes as Box[] });
+            } catch { URL.revokeObjectURL(url); }
+          }
+          if (restored.length) {
+            setImages(restored);
+            setIdx(Math.min(s.idx, restored.length - 1));
+            requestAnimationFrame(() => { resizeCanvas(); redraw(); });
+          }
+        }
+      } catch { /* IndexedDB no disponible: la persistencia queda deshabilitada */ }
+      hydrated = true;
+    })();
   });
 
   return (
@@ -476,11 +554,35 @@ export default function Labelling() {
             <span class="font-mono text-xs text-text-secondary tabular">
               {annotated()} / {images().length} anotadas · {totalBoxes()} cajas
             </span>
+            <div class="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setView(view() === 'gallery' ? 'editor' : 'gallery')}
+                aria-pressed={view() === 'gallery'}
+                aria-label={view() === 'gallery' ? 'Volver al editor' : 'Ver galería'}
+                class="flex items-center justify-center w-8 h-8 rounded-md border transition-colors"
+                classList={{
+                  'border-accent bg-accent-bg text-text-primary': view() === 'gallery',
+                  'border-border text-text-secondary hover:text-text-primary hover:border-accent': view() !== 'gallery',
+                }}
+              >
+                <IconGrid />
+              </button>
+              <button
+                type="button"
+                onClick={clearAll}
+                aria-label="Vaciar sesión"
+                class="flex items-center justify-center w-8 h-8 rounded-md border border-border text-text-secondary hover:text-text-primary hover:border-accent transition-colors"
+              >
+                <IconTrash />
+              </button>
+            </div>
           </Show>
           <ThemeToggle />
         </div>
       </header>
 
+      <Show when={view() === 'editor'}>
       <div class="flex-1 flex min-h-0">
         {/* Lienzo + tira de thumbnails */}
         <section class="flex-1 min-w-0 flex flex-col">
@@ -659,6 +761,63 @@ export default function Labelling() {
           </div>
         </aside>
       </div>
+      </Show>
+
+      {/* Vista galería: overview del estado del dibujado (no edita). Cada celda
+          muestra la imagen con sus cajas (SVG) y, al hacer hover, el desglose
+          por clase. Un clic abre esa imagen en el editor. */}
+      <Show when={view() === 'gallery'}>
+        <div class="flex-1 min-h-0 overflow-y-auto p-6">
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            <For each={images()}>
+              {(im, i) => {
+                const counts = () => {
+                  tick();
+                  const c: Record<ClsName, number> = { glass: 0, paper: 0, plastic: 0 };
+                  im.boxes.forEach((b) => { c[b.cls]++; });
+                  return c;
+                };
+                return (
+                  <button
+                    onClick={() => { selectImage(i()); setView('editor'); }}
+                    class="group relative block overflow-hidden rounded-md border border-border hover:border-accent transition-colors"
+                    aria-label={`Abrir ${im.name} en el editor`}
+                  >
+                    <div class="relative aspect-[4/3] bg-[#0a0a0b]">
+                      <img src={im.url} alt="" class="absolute inset-0 w-full h-full object-contain" />
+                      <svg class="absolute inset-0 w-full h-full" viewBox={`0 0 ${im.w} ${im.h}`} preserveAspectRatio="xMidYMid meet">
+                        <For each={im.boxes}>
+                          {(b) => (
+                            <rect x={b.x} y={b.y} width={b.w} height={b.h} fill="none"
+                              stroke={WONG[b.cls]} stroke-width="2" vector-effect="non-scaling-stroke" />
+                          )}
+                        </For>
+                      </svg>
+                    </div>
+                    {/* Tooltip de desglose por clase (aparece al pasar el mouse). */}
+                    <span
+                      role="tooltip"
+                      class="pointer-events-none absolute inset-x-2 bottom-2 z-10 rounded-md border border-border bg-bg-app/95 px-2.5 py-2 text-xs opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
+                    >
+                      <span class="block truncate font-medium text-text-primary mb-1.5">{im.name}</span>
+                      <span class="flex items-center gap-3 text-text-secondary">
+                        <For each={CLASSES}>
+                          {(c) => (
+                            <span class="flex items-center gap-1">
+                              <span class="w-2 h-2 rounded-sm" style={{ 'background-color': WONG[c] }} />
+                              <span class="font-mono text-text-primary">{counts()[c]}</span>
+                            </span>
+                          )}
+                        </For>
+                      </span>
+                    </span>
+                  </button>
+                );
+              }}
+            </For>
+          </div>
+        </div>
+      </Show>
 
       <input ref={fileInput} type="file" accept="image/*" multiple class="hidden" onChange={onFiles} />
 
