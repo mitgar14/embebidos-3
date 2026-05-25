@@ -156,6 +156,7 @@ export default function Labelling() {
   const [dragOver, setDragOver]   = createSignal(false);
   const [hoverCursor, setHoverCursor] = createSignal('crosshair'); // forma del cursor según la zona
   const [view, setView]           = createSignal<'editor' | 'gallery'>('editor');
+  const [confirmClear, setConfirmClear] = createSignal(false); // modal de vaciar sesión
 
   const cur = () => images()[idx()];
   const refresh = () => bump(0);
@@ -361,6 +362,7 @@ export default function Labelling() {
 
   // ── Teclado: borrar, navegar, asignar clase ──────────────────────────────────
   function onKey(e: KeyboardEvent) {
+    if (confirmClear()) { if (e.key === 'Escape') setConfirmClear(false); return; } // modal abierto: bloquear atajos
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
     if (e.key === 'Delete' || e.key === 'Backspace') {
       if (selected() >= 0) { deleteBox(selected()); e.preventDefault(); }
@@ -486,10 +488,10 @@ export default function Labelling() {
   createEffect(() => { images(); idx(); tick(); if (hydrated) scheduleSave(); });
 
   async function clearAll() {
-    if (images().length && !confirm('¿Vaciar todas las imágenes y anotaciones de esta sesión?')) return;
     clearTimeout(saveTimer);
     images().forEach((im) => URL.revokeObjectURL(im.url));
     setImages([]); setIdx(0); setSelected(-1); setView('editor');
+    setConfirmClear(false);
     await clearSession().catch(() => {});
   }
 
@@ -576,7 +578,7 @@ export default function Labelling() {
               </button>
               <button
                 type="button"
-                onClick={clearAll}
+                onClick={() => setConfirmClear(true)}
                 aria-label="Vaciar sesión"
                 class="flex items-center justify-center w-8 h-8 rounded-md border border-border text-text-secondary hover:text-text-primary hover:border-accent transition-colors"
               >
@@ -833,6 +835,37 @@ export default function Labelling() {
         <div class="absolute inset-0 z-40 flex items-center justify-center bg-bg-app/80 pointer-events-none">
           <div class="rounded-lg border-2 border-dashed border-accent px-8 py-6 text-sm font-medium text-text-primary">
             Soltá las imágenes para cargarlas
+          </div>
+        </div>
+      </Show>
+
+      {/* Modal de confirmación para vaciar la sesión (reemplaza el confirm nativo). */}
+      <Show when={confirmClear()}>
+        <div
+          class="absolute inset-0 z-50 flex items-center justify-center bg-bg-app/70 px-6"
+          onClick={() => setConfirmClear(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="clear-title"
+            class="w-full max-w-sm rounded-lg border border-border bg-bg-panel p-5 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="clear-title" class="text-sm font-semibold text-text-primary">Vaciar sesión</h2>
+            <p class="mt-2 text-sm text-text-secondary leading-relaxed">
+              Se eliminarán las {images().length} imágenes y todas sus anotaciones de esta sesión. No se puede deshacer.
+            </p>
+            <div class="mt-5 flex justify-end gap-2">
+              <button class={BTN} onClick={() => setConfirmClear(false)}>Cancelar</button>
+              <button
+                class="rounded-md px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90"
+                style={{ 'background-color': '#e5484d' }}
+                onClick={clearAll}
+              >
+                Vaciar
+              </button>
+            </div>
           </div>
         </div>
       </Show>
