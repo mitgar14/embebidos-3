@@ -227,6 +227,12 @@ export default function Labelling() {
   // Redibuja ante cambios de estado reactivo (imagen actual, selección, ediciones).
   createEffect(() => { idx(); selected(); tick(); images(); redraw(); });
 
+  // Al volver de la galería al editor, el canvas estuvo display:none (tamaño 0);
+  // re-medir y redibujar en el próximo frame para que la imagen reaparezca.
+  createEffect(() => {
+    if (view() === 'editor') requestAnimationFrame(() => { resizeCanvas(); redraw(); });
+  });
+
   // ── Interacción con el puntero ───────────────────────────────────────────────
   let mode: Mode = 'idle';
   let dragHandle: HandleId | null = null;
@@ -582,8 +588,10 @@ export default function Labelling() {
         </div>
       </header>
 
-      <Show when={view() === 'editor'}>
-      <div class="flex-1 flex min-h-0">
+      {/* El editor se OCULTA (no se desmonta) en galería: así el canvas, su
+          contexto 2D y el ResizeObserver sobreviven y no quedan colgando de un
+          elemento destruido. display inline gana a las utilidades flex/hidden. */}
+      <div class="flex-1 min-h-0" style={{ display: view() === 'editor' ? 'flex' : 'none' }}>
         {/* Lienzo + tira de thumbnails */}
         <section class="flex-1 min-w-0 flex flex-col">
           <div ref={wrap} class="flex-1 min-h-0 relative">
@@ -761,7 +769,6 @@ export default function Labelling() {
           </div>
         </aside>
       </div>
-      </Show>
 
       {/* Vista galería: overview del estado del dibujado (no edita). Cada celda
           muestra la imagen con sus cajas (SVG) y, al hacer hover, el desglose
