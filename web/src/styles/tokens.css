@@ -43,6 +43,7 @@
  * Tema OSCURO (default — primer arranque sin preferencia conocida)
  */
 [data-theme="dark"], :root {
+  color-scheme: dark;         /* el sitio ya es oscuro: evita doble inversión de Dark Reader y arregla controles nativos */
   --bg-app:         #111113;  /* Slate dark-1 */
   --bg-panel:       #18191b;  /* Slate dark-2 */
   --bg-surface:     #212225;  /* Slate dark-3 */
@@ -62,6 +63,7 @@
  * (patrón monocromo Vercel: blanco en oscuro, negro en claro).
  */
 [data-theme="light"] {
+  color-scheme: light;
   --bg-app:         #fcfcfd;  /* Slate light-1 */
   --bg-panel:       #f9f9fb;  /* Slate light-2 */
   --bg-surface:     #f0f0f3;  /* Slate light-3 */
@@ -150,5 +152,23 @@
       transform: translate(-50%, 0);
       transition-property: opacity;
     }
+  }
+
+  /* Tooltip informativo en paneles (abre hacia arriba, anclado a la derecha).
+     Misma estética y curva que .tooltip-popup, pero sin el centrado horizontal. */
+  .info-tip {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+    transform-origin: bottom right;
+    transition:
+      opacity   100ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 100ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .info-tip.info-tip-open {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .info-tip { transition-property: opacity; transform: translateY(0); }
   }
 }

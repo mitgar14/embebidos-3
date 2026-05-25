@@ -61,6 +61,43 @@ function IconDownload() {
     </svg>
   );
 }
+function IconInfo() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4" />
+      <path d="M12 8h.01" />
+    </svg>
+  );
+}
+
+// Tooltip informativo: elemento gráfico propio (role=tooltip), NUNCA el title
+// nativo, igual al patrón del hub. Abre hacia arriba para no salirse del panel.
+function InfoTip(props: { text: string }) {
+  const [open, setOpen] = createSignal(false);
+  return (
+    <span class="relative inline-flex" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <button
+        type="button"
+        aria-label="Formato de exportación"
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        class="flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors"
+      >
+        <IconInfo />
+      </button>
+      <span
+        role="tooltip"
+        classList={{ 'info-tip-open': open() }}
+        class="info-tip pointer-events-none absolute bottom-full right-0 mb-2 z-30 w-64
+               rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text-secondary leading-relaxed"
+      >
+        {props.text}
+      </span>
+    </span>
+  );
+}
 
 export default function Labelling() {
   let canvas!: HTMLCanvasElement;
@@ -74,6 +111,7 @@ export default function Labelling() {
   const [selected, setSelected]   = createSignal(-1);
   const [tick, bump]              = createSignal(0, { equals: false }); // refresh manual de listas
   const [exporting, setExporting] = createSignal(false);
+  const [dragOver, setDragOver]   = createSignal(false);
 
   const cur = () => images()[idx()];
   const refresh = () => bump(0);
@@ -273,10 +311,8 @@ export default function Labelling() {
       im.src = url;
     });
   }
-  async function onFiles(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const files = Array.from(input.files ?? []).filter((f) => f.type.startsWith('image/'));
-    input.value = '';                       // permite recargar los mismos nombres
+  async function addFiles(list: FileList | File[]) {
+    const files = Array.from(list).filter((f) => f.type.startsWith('image/'));
     if (!files.length) return;
     const loaded: LabImage[] = [];
     for (const file of files) {
@@ -286,10 +322,34 @@ export default function Labelling() {
         loaded.push({ name: file.name, url, file, w: img.naturalWidth, h: img.naturalHeight, img, boxes: [] });
       } catch { URL.revokeObjectURL(url); }
     }
+    if (!loaded.length) return;
     const wasEmpty = images().length === 0;
     setImages([...images(), ...loaded]);
     if (wasEmpty) setIdx(0);
     requestAnimationFrame(() => { resizeCanvas(); redraw(); });
+  }
+  function onFiles(e: Event) {
+    const input = e.target as HTMLInputElement;
+    void addFiles(input.files ?? []);
+    input.value = '';                       // permite recargar los mismos nombres
+  }
+
+  // Arrastrar y soltar imágenes en cualquier parte del editor.
+  let dragDepth = 0;
+  function onDragEnter(e: DragEvent) {
+    e.preventDefault(); dragDepth++; setDragOver(true);
+  }
+  function onDragOver(e: DragEvent) {
+    e.preventDefault();                       // imprescindible para habilitar el drop
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  }
+  function onDragLeave(e: DragEvent) {
+    e.preventDefault(); dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) setDragOver(false);
+  }
+  function onDrop(e: DragEvent) {
+    e.preventDefault(); dragDepth = 0; setDragOver(false);
+    if (e.dataTransfer?.files?.length) void addFiles(e.dataTransfer.files);
   }
 
   // ── Export YOLO ──────────────────────────────────────────────────────────────
@@ -360,7 +420,13 @@ export default function Labelling() {
   });
 
   return (
-    <div class="h-screen overflow-hidden bg-bg-app flex flex-col">
+    <div
+      class="h-screen overflow-hidden bg-bg-app flex flex-col relative"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <header class="flex items-center justify-between border-b border-border px-6 h-14 gap-4 shrink-0">
         <div class="flex items-center gap-3 min-w-0">
           <A href="/" aria-label="Volver al inicio"
@@ -395,7 +461,7 @@ export default function Labelling() {
               <div class="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center px-6 text-text-secondary">
                 <IconUpload />
                 <p class="max-w-xs text-sm">
-                  Cargá imágenes del dataset para anotarlas. Todo ocurre en tu navegador, sin subir nada.
+                  Cargá imágenes del dataset (o arrastralas aquí) para anotarlas. Todo ocurre en tu navegador, sin subir nada.
                 </p>
                 <button class={BTN_PRIMARY} onClick={() => fileInput.click()}>Cargar imágenes</button>
               </div>
@@ -500,21 +566,30 @@ export default function Labelling() {
           </div>
 
           <div class="border-t border-border px-4 py-4 flex flex-col gap-2">
+            <div class="flex items-center justify-between mb-1">
+              <h2 class="text-[11px] font-medium uppercase tracking-wider text-text-secondary">Exportar</h2>
+              <InfoTip text="Formato YOLO: class x_center y_center w h normalizado, con data.yaml (clases 0 vidrio, 1 papel, 2 plástico)." />
+            </div>
             <button class={BTN_PRIMARY} onClick={exportZip} disabled={!images().length || exporting()}>
               {exporting() ? 'Empaquetando…' : 'Descargar dataset (.zip)'}
             </button>
             <button class={`${BTN} flex items-center justify-center gap-2`} onClick={exportCurrentTxt} disabled={!cur()}>
               <IconDownload /> Imagen actual (.txt)
             </button>
-            <p class="text-xs text-text-secondary leading-relaxed">
-              Formato YOLO: <span class="font-mono">class x_center y_center w h</span> normalizado, con
-              <span class="font-mono"> data.yaml</span> (clases 0 vidrio, 1 papel, 2 plástico).
-            </p>
           </div>
         </aside>
       </div>
 
       <input ref={fileInput} type="file" accept="image/*" multiple class="hidden" onChange={onFiles} />
+
+      {/* Overlay de arrastre: aparece mientras se arrastran archivos sobre la ventana */}
+      <Show when={dragOver()}>
+        <div class="absolute inset-0 z-40 flex items-center justify-center bg-bg-app/80 pointer-events-none">
+          <div class="rounded-lg border-2 border-dashed border-accent px-8 py-6 text-sm font-medium text-text-primary">
+            Soltá las imágenes para cargarlas
+          </div>
+        </div>
+      </Show>
     </div>
   );
 }
