@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Dashboard Live** - Canvas con overlay de detección a 14 fps, métricas, controles y reconexión robusta
 - [x] **Phase 4: Engine y Labelling** - Centro del Engine del Modelo con logs SSE y Labelling con drag/resize/export
 - [x] **Phase 5: Páginas ESP32** - Guía 3D interactiva del cableado (ESP32 + PCA9685 + servos) y panel de control de servos vía MQTT, integradas al hub (5 destinos) (completed 2026-05-25)
-- [~] **Phase 6: Cámara Local del Nano** - Selector de fuente remota/local en el Dashboard; en local el Nano captura su C920 por GStreamer, infiere y transmite frame + detecciones por WS, reutilizando el worker GPU sin romper el modo remoto. **CÓDIGO de los 3 planes COMPLETO**; deploy al Nano (06-02 T3) y checkpoints humanos en hardware (06-02 T3, 06-03 T3) DIFERIDOS por Nano inalcanzable. CAM-01 cerrado; CAM-03/CAM-04 cierran tras el checkpoint con el Nano vivo
+- [x] **Phase 6: Cámara Local del Nano** - Selector de fuente remota/local en el Dashboard; en local el Nano captura su C920 por GStreamer, infiere y transmite frame + detecciones por WS, reutilizando el worker GPU sin romper el modo remoto. **COMPLETO y validado en hardware** (deploy con backup+rollback, video local 4:3 con overlay en LAN; modo remoto intacto). CAM-01..04 cerrados (completed 2026-05-25)
 
 ## Phase Details
 
@@ -146,11 +146,11 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [~] 06-02-PLAN.md: Transporte Nano hacia el browser. `/ws/local` (frame binario 640x480 + bboxes JSON, `imencode` solo en el hook del worker) + `/camera/mjpeg` de respaldo (generador síncrono) + arbitraje de modo único + deploy al Nano + checkpoint humano. **CÓDIGO COMPLETO** (T1+T2, commits 0617a34 y 8b725a9); **deploy al Nano (T3) y verificación en hardware DIFERIDOS** por Nano inalcanzable por SSH (comandos listos en 06-02-SUMMARY.md)
+- [x] 06-02-PLAN.md: Transporte Nano hacia el browser. `/ws/local` (frame binario 640x480 + bboxes JSON, `imencode` solo en el hook del worker) + `/camera/mjpeg` de respaldo (generador síncrono) + arbitraje de modo único + deploy al Nano + checkpoint humano. **COMPLETO y validado en hardware** (commits 0617a34, 8b725a9; deploy con backup+rollback; pipeline GStreamer HW OK y /ws/local emitió frame+detecciones, inferencia ~35ms)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [~] 06-03-PLAN.md: Selector de fuente y render local en el Dashboard. `localCamera.ts` + `dashboard.tsx` (canvas dimensionado a las dims reales del frame, overlay reusando `drawDetections`, liberación de la cámara al cambiar de fuente). **CÓDIGO + BUILD + verificación sin-Nano COMPLETOS** (T1+T2, commits d828cf3 y c78e834; Playwright 10/10: selector conmuta, estado de error claro sin spinner infinito, remoto intacto); **checkpoint humano e2e con video real (T3) DIFERIDO** por Nano inalcanzable. CAM-01 cerrado; CAM-03/CAM-04 siguen Pending hasta el checkpoint con el Nano vivo
+- [x] 06-03-PLAN.md: Selector de fuente y render local en el Dashboard. `localCamera.ts` + `dashboard.tsx` (canvas dimensionado a las dims reales del frame, overlay reusando `drawDetections`, liberación de la cámara al cambiar de fuente). **CÓDIGO + BUILD + verificación sin-Nano COMPLETOS** (T1+T2, commits d828cf3 y c78e834; Playwright 10/10: selector conmuta, estado de error claro sin spinner infinito, remoto intacto); **checkpoint humano e2e CUMPLIDO**: video local 4:3 con overlay validado en LAN (el ritmo fluido exige equipo+Nano en la misma red local; por el túnel cae a ~1fps). CAM-01..04 cerrados
 
 **UI hint**: yes
 

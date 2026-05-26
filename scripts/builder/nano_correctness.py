@@ -21,8 +21,8 @@ import cv2
 import numpy as np
 
 
-CLASSES = ["glass", "paper", "plastic"]
-COLORS = [(0, 255, 0), (255, 200, 0), (0, 100, 255)]
+CLASSES = ["glass", "paper", "plastic", "cardboard"]
+COLORS = [(0, 255, 0), (255, 200, 0), (0, 100, 255), (19, 69, 139)]
 IMGSZ = 416
 CONF_TH = 0.25
 NMS_TH = 0.45

@@ -41,7 +41,7 @@ ENGINES_ARCHIVE_PREFIX = "engines-archive"
 
 # Inferencia
 IMGSZ = 416
-CLASSES = ["glass", "paper", "plastic"]
+CLASSES = ["glass", "paper", "plastic", "cardboard"]
 DEFAULT_CONF = 0.25
 DEFAULT_NMS = 0.45
 

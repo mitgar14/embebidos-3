@@ -9,7 +9,7 @@
 //                     enviado. {ok, seq, bboxes, t_infer_ms}. conf_ack y pong
 //                     se ignoran (pong ya lo filtra ReconnectingWebSocket).
 
-export type ClsName = 'glass' | 'paper' | 'plastic';
+export type ClsName = 'glass' | 'paper' | 'plastic' | 'cardboard';
 
 export interface BBox {
   x1: number; y1: number; x2: number; y2: number;
@@ -26,15 +26,17 @@ export interface DetectionMsg {
 
 // Paleta Wong (daltónico-segura), decisión canónica del proyecto.
 export const WONG: Record<ClsName, string> = {
-  glass:   '#56B4E9',   // sky blue
-  paper:   '#E69F00',   // ámbar
-  plastic: '#009E73',   // bluish-green
+  glass:     '#56B4E9',   // sky blue
+  paper:     '#E69F00',   // ámbar
+  plastic:   '#009E73',   // bluish-green
+  cardboard: '#D55E00',   // bermellón (Okabe-Ito), 4ª clase
 };
 
 export const CLASS_LABEL_ES: Record<ClsName, string> = {
-  glass:   'vidrio',
-  paper:   'papel',
-  plastic: 'plástico',
+  glass:     'vidrio',
+  paper:     'papel',
+  plastic:   'plástico',
+  cardboard: 'cartón',
 };
 
 const BG_BLACK    = '#0a0a0b';   // fondo cuando se oculta la cámara

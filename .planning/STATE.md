@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: 06-03 CODIGO + BUILD + verificación sin-Nano completos (selector remota/local, modo local con createImageBitmap + drawDetections a las dims reales del frame, remoto getUserMedia intacto; Playwright 10/10). T3 checkpoint humano e2e con video real DIFERIDO por Nano caído. Pendiente para cerrar CAM-03/CAM-04: (1) recuperar el túnel al Nano, (2) deploy DIFERIDO de 06-02 (T3), (3) checkpoint humano de 06-03 (T3). Comandos en 06-03-SUMMARY.md.
-last_updated: "2026-05-25T20:42:30.520Z"
+status: complete
+stopped_at: Fase 6 (Cámara Local del Nano) EJECUTADA y VALIDADA en hardware el 2026-05-25. Deploy de nano_server.py + camera_capture.py con backup (nano_server.py.bak-pre06) + verificación /health + rollback automático. Pipeline GStreamer HW validado (C920 640x480), /ws/local emitió frame+detecciones (inferencia ~35ms), Dashboard mostró video local 4:3 con overlay; cámara liberada al cerrar; modo remoto intacto. CAM-01..04 cerrados. Milestone v1.0 con las 6 fases completas. NOTA DEMO: el modo local exige equipo+Nano en la MISMA red local (por el túnel Headscale DERP cae a ~1fps; en LAN va a ~14fps).
+last_updated: "2026-05-25T21:30:00.000Z"
 last_activity: 2026-05-25
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 6
   total_plans: 9
   completed_plans: 9
-  percent: 50
+  percent: 100
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-24)
 
 **Core value:** Dashboard live a ~14 fps con WS reconectante, fluido y profesional en la sustentación del 2026-05-26
-**Current focus:** Phase 06: Cámara Local del Nano (planeada, lista para ejecutar)
+**Current focus:** Milestone v1.0 completo (6 fases). Fase 06 (Cámara Local del Nano) validada en hardware. Pendiente: ensayar la demo del 2026-05-26 con equipo+Nano en la misma red local
 
 ## Current Position
 
-Phase: 06 (Cámara Local del Nano) EN EJECUCIÓN
-Plan: 3 of 3 (06-01 completo; 06-02 código completo, deploy DIFERIDO; 06-03 código + build + verificación sin-Nano completos, checkpoint humano DIFERIDO)
-Status: Código de la fase completo; verificación en hardware (deploy 06-02 + checkpoints humanos) DIFERIDA por Nano caído
+Phase: 06 (Cámara Local del Nano) COMPLETA y validada en hardware
+Plan: 3 of 3 (todos desplegados; deploy con backup+rollback, /ws/local validado, Dashboard mostró video local en LAN)
+Status: Milestone v1.0 con las 6 fases completas. Demo lista (el modo local exige equipo+Nano en la misma red local)
 Last activity: 2026-05-25
 
 Progress: [██████████] 100%

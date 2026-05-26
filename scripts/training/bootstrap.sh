@@ -59,12 +59,17 @@ fi
 # --extra-index-url) que viene como +cu130 y no carga con driver 12.4.
 echo "[4/8] stack Track B"
 
-# 4a) PyTorch primero, versión pineada al wheel CUDA explícito (cu124).
-# NO usar --extra-index-url aquí — pypi tiene torch 2.12+cu130 más reciente
-# y uv prefiere version > index. Resto del stack instala desde pypi en 4b.
+# 4a) PyTorch primero, pineado al wheel CUDA explícito (cu128).
+# D35 (2026-05-25): Vast.ai entrega GPUs Blackwell (sm_120, p.ej. RTX PRO 6000)
+# incluso bajo etiquetas como "RTX_4090", con driver 580+. El wheel cu124
+# (torch 2.4.1) NO trae kernels sm_120 y revienta con "no kernel image
+# available". cu128 (torch 2.7.0) cubre sm_120 y tambien Ada, Hopper y Ampere,
+# así que es la opción universal y segura sin importar qué GPU caiga.
+# NO usar extra-index aquí: pypi tiene torch más reciente y uv prefiere version
+# sobre index. Resto del stack instala desde pypi en 4b.
 uv pip install --python "$VENV/bin/python" \
-  --index-url https://download.pytorch.org/whl/cu124 \
-  torch==2.4.1 torchvision==0.19.1
+  --index-url https://download.pytorch.org/whl/cu128 \
+  torch==2.7.0 torchvision==0.22.0
 
 # 4b) Resto del stack — Ultralytics ya no toca torch (lo encuentra instalado).
 uv pip install --python "$VENV/bin/python" \
@@ -88,6 +93,11 @@ uv pip install --python "$VENV/bin/python" --force-reinstall "numpy<2.0"
 echo "[5/8] ipykernel"
 "$VENV/bin/python" -m ipykernel install --user \
   --name trackb --display-name "Track B (YOLOv8)"
+
+# ---- 6-7) vastai CLI + cron watchdog: omitibles con SKIP_WATCHDOG -----------
+# Bajo un orquestador externo (p.ej. SkyPilot autodown) el teardown lo maneja
+# el orquestador, no este watchdog. SKIP_WATCHDOG=1 salta ambas secciones.
+if [ "${SKIP_WATCHDOG:-0}" != "1" ]; then
 
 # ---- 6) vastai CLI para watchdog (D11) --------------------------------------
 echo "[6/8] vastai CLI"
@@ -153,11 +163,17 @@ chmod +x /opt/scripts/check-gpu-idle.sh
 
 service cron start >/dev/null 2>&1 || /etc/init.d/cron start >/dev/null 2>&1 || true
 
+else
+  echo "[6-7/8] vastai CLI + cron watchdog OMITIDOS (SKIP_WATCHDOG=1; teardown vía orquestador)"
+fi
+
 # ---- 8) Workdir + JupyterLab en tmux (D9, D18) ------------------------------
 echo "[8/8] workdir + JupyterLab"
 mkdir -p "$WORKDIR/runs" "$WORKDIR/logs" "$WORKDIR/models" "$WORKDIR/notebooks" "$WORKDIR/datasets"
 
-if ! tmux has-session -t jupyter 2>/dev/null; then
+# SKIP_JUPYTERLAB=1 omite el lab interactivo (al correr nbconvert headless bajo
+# un orquestador). Los mkdir de arriba se conservan.
+if [ "${SKIP_JUPYTERLAB:-0}" != "1" ] && ! tmux has-session -t jupyter 2>/dev/null; then
   tmux new-session -d -s jupyter \
     "cd $WORKDIR && $VENV/bin/jupyter lab \
        --no-browser --port=8888 --ip=0.0.0.0 --allow-root \

@@ -1,0 +1,73 @@
+# train-v1d.sky.yaml
+# Orquestación del entrenamiento v1d (Tiny Trash, YOLOv8n 4 clases) en Vast.ai
+# vía SkyPilot. Reemplaza onstart.sh + cron watchdog + el `vastai destroy` del
+# notebook: SkyPilot provisiona la oferta, corre nbconvert y hace AUTODOWN
+# (destruye la instancia) al quedar idle. La persistencia la sigue haciendo el
+# CommitScheduler interno del notebook hacia HF.
+#
+# Prerrequisitos (una sola vez, desde la raíz del repo):
+#   pip install -U "skypilot[vast]"          # o: uv pip install "skypilot[vast]"
+#   mkdir -p ~/.config/vastai
+#   grep '^VAST_API_KEY=' .env | cut -d= -f2- > ~/.config/vastai/vast_api_key
+#   sky check vast                            # debe imprimir: Vast: enabled
+#
+# Lanzar (desde la raíz del repo, para que los file_mounts relativos resuelvan):
+#   sky launch -d -c v1d train-v1d.sky.yaml \
+#     --secret HF_TOKEN="$(grep '^HF_TOKEN=' .env | cut -d= -f2-)"
+#
+#   sky logs v1d            # logs del entrenamiento en vivo
+#   sky status v1d          # estado + minutos de autostop restantes
+#   sky down v1d            # teardown manual (autodown ya lo hace solo)
+#
+# Verificar el nombre exacto de GPU en Vast antes de lanzar:
+#   sky show-gpus --infra vast
+
+name: tinytrash-v1d
+
+resources:
+  infra: vast
+  accelerators: RTX3090:1          # GPU barata; torch cu128 (bootstrap) corre en cualquier arch (Ampere/Ada/Hopper/Blackwell)
+  image_id: docker:vastai/base-image:cuda-12.4.1-cudnn-devel-ubuntu22.04-py310
+  disk_size: 40
+  autostop:
+    idle_minutes: 5
+    down: true                     # AUTODOWN: termina la instancia (no solo la pausa). NO cancelarlo.
+
+# HF_TOKEN como secret: SkyPilot lo redacta en logs y en el dashboard.
+# Pasar con: sky launch ... --secret HF_TOKEN=<valor>
+# Si tu versión de SkyPilot no soporta `secrets:`, mover HF_TOKEN a `envs:` y
+# pasarlo con `--env HF_TOKEN=...` (NO se redacta en logs en ese caso).
+secrets:
+  HF_TOKEN: null
+
+envs:
+  SKIP_WATCHDOG: "1"               # SkyPilot autodown reemplaza el cron watchdog de bootstrap.sh
+  SKIP_JUPYTERLAB: "1"             # corremos nbconvert headless, sin lab interactivo
+  DISABLE_NOTEBOOK_AUTODESTROY: "1"  # el teardown lo hace SkyPilot, no el notebook
+
+# Sincroniza solo lo necesario; el dataset lo baja el propio notebook desde HF.
+# Rutas locales relativas a la raíz del repo (de ahí se corre `sky launch`).
+file_mounts:
+  /workspace/embebidos-3/notebooks: ./notebooks
+  /workspace/embebidos-3/scripts/training: ./scripts/training
+
+# Equivale a la etapa 2 del flujo viejo: instala el stack Track B en
+# /opt/venv/trackb (torch cu124 pineado) y registra el kernel 'trackb'.
+# SKIP_WATCHDOG/SKIP_JUPYTERLAB recortan lo que no aplica bajo orquestador.
+setup: |
+  set -e
+  bash /workspace/embebidos-3/scripts/training/bootstrap.sh
+
+# Ejecuta el notebook headless. heartbeat.jsonl, results.csv, manifest.json y
+# best.pt se publican en HF (mitgar14/embebidos-3-models-v1d) vía el
+# CommitScheduler del notebook. Al terminar el run la instancia queda idle y
+# SkyPilot la destruye (autodown, ~10 min).
+run: |
+  set -e
+  cd /workspace/embebidos-3/notebooks
+  /opt/venv/trackb/bin/jupyter nbconvert \
+    --to notebook --execute --inplace \
+    --ExecutePreprocessor.timeout=7200 \
+    --ExecutePreprocessor.kernel_name=trackb \
+    train_v1d_vastai.ipynb
+  echo "TRAINING_DONE. Modelo y metricas en HF (CommitScheduler). Autodown en ~10 min idle."

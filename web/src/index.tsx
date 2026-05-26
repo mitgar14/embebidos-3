@@ -14,7 +14,7 @@ const Dashboard = lazy(() => import('./routes/dashboard'));
 const Engine    = lazy(() => import('./routes/engine'));
 const Labelling = lazy(() => import('./routes/labelling'));
 const Guia      = lazy(() => import('./routes/guia'));
-const Control   = lazy(() => import('./routes/control'));
+const Entrenamiento = lazy(() => import('./routes/entrenamiento'));
 
 function App() {
   return (
@@ -24,7 +24,7 @@ function App() {
       <Route path="/engine"     component={Engine} />
       <Route path="/labelling"  component={Labelling} />
       <Route path="/guia"       component={Guia} />
-      <Route path="/control"    component={Control} />
+      <Route path="/entrenamiento" component={Entrenamiento} />
     </HashRouter>
   );
 }

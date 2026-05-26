@@ -92,23 +92,6 @@ function LabellingIcon() {
   );
 }
 
-// Icono de slider/potenciometro para Control de servos
-function ControlIcon() {
-  return (
-    <svg aria-hidden="true" width="26" height="26" viewBox="0 0 20 20" fill="none"
-      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      {/* Riel superior */}
-      <line x1="2" y1="7" x2="18" y2="7" />
-      {/* Circulo deslizante superior */}
-      <circle cx="7" cy="7" r="2.5" />
-      {/* Riel inferior */}
-      <line x1="2" y1="13" x2="18" y2="13" />
-      {/* Circulo deslizante inferior */}
-      <circle cx="13" cy="13" r="2.5" />
-    </svg>
-  );
-}
-
 interface DestTileProps {
   label: string;
   description: string;
@@ -244,12 +227,6 @@ export function Placeholder() {
             description="Anotación de imágenes con drag, resize y export"
             icon={LabellingIcon}
             path="/labelling"
-          />
-          <DestTile
-            label="Control de servos"
-            description="Mover servos del ESP32 por MQTT en vivo"
-            icon={ControlIcon}
-            path="/control"
           />
         </nav>
       </main>

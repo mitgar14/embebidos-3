@@ -2,7 +2,7 @@
 // Labelling (Fase 4, LBL-01..05): editor de bounding boxes 100% client-side.
 // No hay backend en el Nano para el etiquetado (es un flujo offline), así que
 // todo vive en el navegador: cargar imágenes del disco, dibujar/mover/
-// redimensionar cajas, asignar una de las 3 clases (vidrio/papel/plástico) y
+// redimensionar cajas, asignar una de las 4 clases (vidrio/papel/plástico/cartón) y
 // exportar en formato YOLO (un .txt por imagen + data.yaml) empaquetado en .zip.
 
 import { createSignal, createEffect, onMount, onCleanup, For, Show, type JSX } from 'solid-js';
@@ -15,8 +15,8 @@ import { saveBlob, saveMeta, loadSession, clearSession } from '../lib/labelStore
 // id estable por imagen (clave en IndexedDB). randomUUID existe en contexto seguro (localhost).
 const uid = () => (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
-const CLASSES: ClsName[] = ['glass', 'paper', 'plastic'];
-const CLASS_ID: Record<ClsName, number> = { glass: 0, paper: 1, plastic: 2 };
+const CLASSES: ClsName[] = ['glass', 'paper', 'plastic', 'cardboard'];
+const CLASS_ID: Record<ClsName, number> = { glass: 0, paper: 1, plastic: 2, cardboard: 3 };
 
 // Caja en coordenadas de la IMAGEN original (píxeles). Trabajar en este espacio
 // (no en el del canvas) hace el export YOLO directo y estable ante el zoom/fit.
@@ -369,7 +369,7 @@ export default function Labelling() {
     } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { go(1); }
     else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { go(-1); }
     else if (e.key === 'Escape') { setSelected(-1); }
-    else if (e.key >= '1' && e.key <= '3') { assignClass(CLASSES[+e.key - 1]); }
+    else if (e.key >= '1' && e.key <= '4') { assignClass(CLASSES[+e.key - 1]); }
   }
 
   // ── Carga de imágenes ────────────────────────────────────────────────────────
@@ -433,7 +433,7 @@ export default function Labelling() {
     }).join('\n');
   }
   const dataYaml = () =>
-    ['path: .', 'train: images', 'val: images', '', 'nc: 3', "names: ['glass', 'paper', 'plastic']", ''].join('\n');
+    ['path: .', 'train: images', 'val: images', '', 'nc: 4', "names: ['glass', 'paper', 'plastic', 'cardboard']", ''].join('\n');
 
   function download(blob: Blob, filename: string) {
     const url = URL.createObjectURL(blob);
@@ -665,7 +665,7 @@ export default function Labelling() {
                   </div>
                   <div class="flex items-center justify-between gap-3">
                     <span>Cambiar clase</span>
-                    <span class="flex gap-1"><Kbd>1</Kbd><Kbd>2</Kbd><Kbd>3</Kbd></span>
+                    <span class="flex gap-1"><Kbd>1</Kbd><Kbd>2</Kbd><Kbd>3</Kbd><Kbd>4</Kbd></span>
                   </div>
                   <div class="flex items-center justify-between gap-3">
                     <span>Navegar imágenes</span>
@@ -782,7 +782,7 @@ export default function Labelling() {
               {(im, i) => {
                 const counts = () => {
                   tick();
-                  const c: Record<ClsName, number> = { glass: 0, paper: 0, plastic: 0 };
+                  const c: Record<ClsName, number> = { glass: 0, paper: 0, plastic: 0, cardboard: 0 };
                   im.boxes.forEach((b) => { c[b.cls]++; });
                   return c;
                 };

@@ -65,8 +65,8 @@ Requisitos para la sustentación. Cada uno mapea a una fase del roadmap.
 
 - [x] **CAM-01**: El usuario puede elegir en el Dashboard la fuente de cámara entre "remota" (la webcam del navegador, vía `getUserMedia`) y "local" (la Logitech C920 conectada al Nano), con un solo modo activo a la vez
 - [x] **CAM-02**: En modo local, el server del Nano captura `/dev/video0` por GStreamer (`nvv4l2decoder mjpeg=1` con fallback a `jpegdec`), infiere con el engine TRT y reutiliza el worker GPU existente bifurcando por tipo de entrada, sin romper el modo remoto
-- [ ] **CAM-03**: En modo local, el Nano transmite el frame + las detecciones al Dashboard por WebSocket binario y el Dashboard dibuja el overlay reutilizando `drawDetections` a ~10-14 fps; existe un endpoint MJPEG de respaldo para la demo
-- [ ] **CAM-04**: Al cambiar de fuente o salir del Dashboard, el modo local libera `/dev/video0` limpiamente; si la cámara no está disponible, el Dashboard muestra un estado claro sin colgarse
+- [x] **CAM-03**: En modo local, el Nano transmite el frame + las detecciones al Dashboard por WebSocket binario y el Dashboard dibuja el overlay reutilizando `drawDetections` a ~10-14 fps; existe un endpoint MJPEG de respaldo para la demo
+- [x] **CAM-04**: Al cambiar de fuente o salir del Dashboard, el modo local libera `/dev/video0` limpiamente; si la cámara no está disponible, el Dashboard muestra un estado claro sin colgarse
 
 ### Orquestación
 
@@ -137,8 +137,8 @@ Qué fases cubren qué requisitos.
 | CTRL-03 | Phase 5 — Páginas ESP32 | Complete |
 | CAM-01 | Phase 6 — Cámara Local del Nano | Complete |
 | CAM-02 | Phase 6 — Cámara Local del Nano | Complete |
-| CAM-03 | Phase 6 — Cámara Local del Nano | Pending |
-| CAM-04 | Phase 6 — Cámara Local del Nano | Pending |
+| CAM-03 | Phase 6 — Cámara Local del Nano | Complete |
+| CAM-04 | Phase 6 — Cámara Local del Nano | Complete |
 
 **Coverage:**
 - v1 requirements: 37 total

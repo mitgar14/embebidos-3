@@ -1,0 +1,117 @@
+{
+  "model_arch": "yolov8n",
+  "imgsz": 416,
+  "classes": [
+    "glass",
+    "paper",
+    "plastic"
+  ],
+  "dataset": {
+    "workspace": "embebidos3",
+    "project": "waste-3class-lwld8",
+    "version": 1,
+    "format": "yolov8"
+  },
+  "training": {
+    "epochs_max": 100,
+    "epochs_run": 66,
+    "epochs_to_best": 36,
+    "batch": 64,
+    "patience": 20,
+    "seed": 42,
+    "wallclock_seconds": 5371.59,
+    "host": "vastai RTX 4090 (Hong Kong, $0.25/h, contract 36764738)",
+    "incomplete_run": true,
+    "incomplete_reason": "instancia destruida antes de cells 22-28 (post-hoc recovery)"
+  },
+  "training_best_metrics_val": {
+    "epoch": 36,
+    "mAP50": 0.90891,
+    "mAP50_95": 0.71838,
+    "precision": 0.89692,
+    "recall": 0.83097
+  },
+  "evaluation_test": {
+    "mAP50": 0.8891007460248802,
+    "mAP50_95": 0.6973115953284482,
+    "precision_mean": 0.9166544542657168,
+    "recall_mean": 0.8082608278113895,
+    "per_class": {
+      "glass": {
+        "precision": 0.9673266820600935,
+        "recall": 0.9038461538461539,
+        "AP50": 0.958096347093721,
+        "AP50_95": 0.8031682707393317
+      },
+      "paper": {
+        "precision": 0.8845199553013472,
+        "recall": 0.6866666666666666,
+        "AP50": 0.8112758941613425,
+        "AP50_95": 0.5976818962702904
+      },
+      "plastic": {
+        "precision": 0.8981167254357096,
+        "recall": 0.8342696629213483,
+        "AP50": 0.8979299968195771,
+        "AP50_95": 0.6910846189757225
+      }
+    }
+  },
+  "artifacts": {
+    "best_pt": {
+      "path": "runs/detect/train/weights/best.pt",
+      "sha256": "fabfec53481708a64b21640761312b68aa86f9e9bc6b5ccc0a9e85c8d1cbf4e0",
+      "size_mb": 6.22
+    },
+    "best_onnx": {
+      "path": "exports/best.onnx",
+      "sha256": "223f1a71c4b1bd08effdfa02fabb1ce259a3a507015d39e2359b5bec3dc805ad",
+      "size_mb": 12.17,
+      "opset": 11,
+      "ir_version": 6
+    }
+  },
+  "gates": {
+    "gate3_onnx": {
+      "opset": 11,
+      "ir_version": 6,
+      "input_shape": [
+        1,
+        3,
+        416,
+        416
+      ],
+      "n_outputs": 1,
+      "ops_count": 14,
+      "ops_forbidden": [],
+      "checker": "ok",
+      "pass": true
+    },
+    "gate4_polygraphy": {
+      "skipped": true,
+      "reason": "recovery local sin Docker"
+    }
+  },
+  "target_nano": {
+    "device": "Jetson Nano B01",
+    "jetpack": "4.6.1",
+    "l4t": "R32.7.1",
+    "cuda": "10.2.300",
+    "cudnn": "8.2.1",
+    "tensorrt": "8.2.1.8",
+    "python": "3.6.9",
+    "compute_capability": "5.3",
+    "nms_strategy": {
+      "v0_default": "cv2.dnn.NMSBoxes (CPU NumPy)",
+      "v1_smoke_test": "EfficientNMS_TRT plugin",
+      "v2_fallback": "BatchedNMSDynamic_TRT plugin"
+    },
+    "trtexec": "trtexec --onnx=best.onnx --saveEngine=yolov8n_waste_fp16.engine --fp16 --workspace=1024 --verbose"
+  },
+  "recovery": {
+    "ran_locally": true,
+    "host": "Win11 + Intel Iris Xe (CPU)",
+    "torch": "2.12.0+cpu",
+    "timestamp": "2026-05-14T18:38:26.740987+00:00"
+  }
+}
